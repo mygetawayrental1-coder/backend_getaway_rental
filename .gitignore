@@ -1,0 +1,13 @@
+node_modules
+# Keep environment variables out of version control
+.env
+
+# Prisma generated
+/generated/prisma
+
+# Uploads folder (use Render Disk in production)
+uploads/
+
+# SQLite database (use PostgreSQL in production)
+*.db
+prisma/dev.db

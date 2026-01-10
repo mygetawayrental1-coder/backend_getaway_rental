@@ -1,0 +1,160 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id               String    @id @default(cuid())
+  email            String    @unique
+  password         String
+  firstName        String
+  lastName         String
+  countryCode      String?
+  phoneNumber      String?
+  address          String?
+  profilePic       String?
+  role             String    @default("END_USER") // ADMIN, OWNER, END_USER
+  emailVerified    Boolean   @default(false)
+  verifyToken      String?
+  resetToken       String?
+  resetTokenExpiry DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  properties    Property[]
+  inquiries     Inquiry[]
+  subscriptions UserSubscription[]
+  payments      Payment[]
+}
+
+model Property {
+  id                  String    @id @default(cuid())
+  propertyId          String    @unique @default(cuid())
+  propertyName        String
+  location            String
+  state               String?
+  country             String?
+  latitude            String?
+  longitude           String?
+  guests              Int       @default(0)
+  bedrooms            Int       @default(0)
+  bathrooms           Int       @default(0)
+  kitchens            Int       @default(0)
+  ratePeriodStart     DateTime?
+  ratePeriodEnd       DateTime?
+  minRate             Int       @default(0)
+  nightlyRate         Int       @default(0)
+  weekendRate         Int       @default(0)
+  weeklyRate          Int       @default(0)
+  monthlyRate         Int       @default(0)
+  additionalCharges   String?   // JSON string array
+  amenities           String?   // JSON string array
+  about               String?
+  policyAndHouseRules String?
+  images              String?   // JSON string array
+  icalUrls            String?   // JSON object
+  status              String    @default("Active") // Active, Inactive, Pending
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  ownerId       String
+  owner         User           @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  inquiries     Inquiry[]
+  guestRequests GuestRequest[]
+}
+
+model Inquiry {
+  id             String   @id @default(cuid())
+  enquiryId      String   @unique @default(cuid())
+  propertyName   String?
+  propertyImages String?
+  fullName       String
+  email          String
+  phone          String?
+  gender         String?
+  guests         Int      @default(1)
+  totalAmount    Float?
+  message        String?
+  checkin        DateTime?
+  checkout       DateTime?
+  nights         Int?
+  status         String   @default("PENDING") // PENDING, ACCEPTED, REJECTED, BOOKED, CANCELLED
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  propertyId String
+  property   Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+}
+
+model SubscriptionPlan {
+  id           String   @id @default(cuid())
+  name         String
+  price        Float
+  specialPrice Float?
+  duration     String   // Monthly, Yearly
+  features     String?  // JSON string array
+  status       String   @default("Active") // Active, Inactive
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  subscriptions UserSubscription[]
+}
+
+model UserSubscription {
+  id        String   @id @default(cuid())
+  startDate DateTime @default(now())
+  endDate   DateTime
+  status    String   @default("ACTIVE") // ACTIVE, EXPIRED, CANCELLED
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  userId  String
+  user    User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  planId  String
+  plan    SubscriptionPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  payment Payment?
+}
+
+model Payment {
+  id              String   @id @default(cuid())
+  paypalOrderId   String   @unique
+  paypalPaymentId String?
+  amount          Float
+  currency        String   @default("USD")
+  status          String   @default("created") // created, paid, failed
+  type            String   // subscription, booking
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  userId         String
+  user           User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subscriptionId String?           @unique
+  subscription   UserSubscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+}
+
+// Guest contact requests (no auth required for guests)
+model GuestRequest {
+  id           String   @id @default(cuid())
+  fullName     String
+  email        String
+  phone        String?
+  message      String?
+  checkin      DateTime?
+  checkout     DateTime?
+  guests       Int      @default(1)
+  status       String   @default("NEW") // NEW, VIEWED, CONTACTED, CLOSED
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  propertyId   String
+  property     Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+}
