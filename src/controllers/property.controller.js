@@ -167,9 +167,35 @@ const getPropertyById = async (req, res) => {
             });
         }
 
+        // Get booked dates for availability calendar
+        const bookedDates = await prisma.booking.findMany({
+            where: {
+                propertyId: property.id,
+                status: 'CONFIRMED',
+                checkout: { gte: new Date() }, // Only future/current bookings
+            },
+            select: {
+                checkin: true,
+                checkout: true,
+                bookingId: true,
+            },
+            orderBy: {
+                checkin: 'asc',
+            },
+        });
+
+        const propertyData = formatPropertyResponse(property);
+
         res.json({
             success: true,
-            data: formatPropertyResponse(property),
+            data: {
+                ...propertyData,
+                bookedDates: bookedDates.map(b => ({
+                    checkin: b.checkin,
+                    checkout: b.checkout,
+                    bookingId: b.bookingId,
+                })),
+            },
         });
     } catch (error) {
         console.error('Get property by ID error:', error);

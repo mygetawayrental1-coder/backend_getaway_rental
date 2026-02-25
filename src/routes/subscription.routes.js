@@ -14,7 +14,9 @@ router.put('/plans/:id', authenticate, isAdmin, subscriptionController.updatePla
 router.delete('/plans/:id', authenticate, isAdmin, subscriptionController.deletePlan);
 
 // Owner routes - subscription management
+router.post('/', authenticate, requireRole(ROLES.OWNER), subscriptionController.subscribe);
 router.post('/subscribe', authenticate, requireRole(ROLES.OWNER), subscriptionController.subscribe);
+router.get('/my', authenticate, requireRole(ROLES.OWNER), subscriptionController.getMySubscription);
 router.get('/my-subscription', authenticate, requireRole(ROLES.OWNER), subscriptionController.getMySubscription);
 router.post('/cancel', authenticate, requireRole(ROLES.OWNER), subscriptionController.cancelSubscription);
 

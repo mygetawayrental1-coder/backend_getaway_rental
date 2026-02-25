@@ -15,6 +15,7 @@ const uploadRoutes = require('./routes/upload.routes');
 const dashboardRoutes = require('./routes/dashboard.routes');
 const captchaRoutes = require('./routes/captcha.routes');
 const guestRequestRoutes = require('./routes/guestRequest.routes');
+const bookingRoutes = require('./routes/booking.routes');
 
 const app = express();
 
@@ -49,8 +50,9 @@ app.get('/', (req, res) => {
             owners: '/owners',
             subscriptions: '/subscriptions',
             payments: '/payments',
-            uploads: '/aws',
+            uploads: '/uploads',
             dashboard: '/dashboard',
+            bookings: '/bookings',
         },
     });
 });
@@ -64,10 +66,12 @@ app.use('/user', userRoutes); // Alias for mobile app compatibility
 app.use('/owners', ownerRoutes);
 app.use('/subscriptions', subscriptionRoutes);
 app.use('/payments', paymentRoutes);
-app.use('/aws', uploadRoutes);
+app.use('/uploads', uploadRoutes);
+app.use('/aws', uploadRoutes); // Alias for mobile app backward compatibility
 app.use('/dashboard', dashboardRoutes);
 app.use('/captcha', captchaRoutes);
 app.use('/guest-requests', guestRequestRoutes);
+app.use('/bookings', bookingRoutes);
 
 // 404 Handler
 app.use((req, res) => {

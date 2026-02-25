@@ -4,7 +4,7 @@ const app = require('./src/app');
 const PORT = process.env.PORT || 5000;
 
 app.listen(PORT, () => {
-    console.log(`
+  console.log(`
 ╔════════════════════════════════════════════════════════════╗
 ║                                                            ║
 ║   🚀 MyGatewayRental API Server                            ║
@@ -20,7 +20,7 @@ app.listen(PORT, () => {
 ║   • Owners:        /owners                                 ║
 ║   • Subscriptions: /subscriptions                          ║
 ║   • Payments:      /payments                               ║
-║   • Uploads:       /aws                                    ║
+║   • Uploads:       /uploads                          ║
 ║   • Dashboard:     /dashboard                              ║
 ║                                                            ║
 ╚════════════════════════════════════════════════════════════╝

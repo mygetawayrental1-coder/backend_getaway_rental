@@ -68,6 +68,7 @@ model Property {
   owner         User           @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   inquiries     Inquiry[]
   guestRequests GuestRequest[]
+  bookings      Booking[]
 }
 
 model Inquiry {
@@ -158,3 +159,30 @@ model GuestRequest {
   propertyId   String
   property     Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
 }
+
+// Confirmed bookings (instant reservations)
+model Booking {
+  id            String   @id @default(cuid())
+  bookingId     String   @unique @default(cuid())
+  propertyId    String
+  guestName     String
+  guestEmail    String
+  guestPhone    String?
+  checkin       DateTime
+  checkout      DateTime
+  guests        Int      @default(1)
+  nights        Int
+  nightlyRate   Int
+  totalAmount   Float
+  status        String   @default("CONFIRMED") // CONFIRMED, CANCELLED, COMPLETED
+  notes         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  property      Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@index([propertyId])
+  @@index([checkin, checkout])
+  @@index([status])
+}
+
