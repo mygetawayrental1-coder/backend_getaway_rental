@@ -54,12 +54,12 @@ model Property {
   weekendRate         Int       @default(0)
   weeklyRate          Int       @default(0)
   monthlyRate         Int       @default(0)
-  additionalCharges   String?   // JSON string array
-  amenities           String?   // JSON string array
+  additionalCharges   String? // JSON string array
+  amenities           String? // JSON string array
   about               String?
   policyAndHouseRules String?
-  images              String?   // JSON string array
-  icalUrls            String?   // JSON object
+  images              String? // JSON string array
+  icalUrls            String? // JSON object
   status              String    @default("Active") // Active, Inactive, Pending
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
@@ -72,23 +72,23 @@ model Property {
 }
 
 model Inquiry {
-  id             String   @id @default(cuid())
-  enquiryId      String   @unique @default(cuid())
+  id             String    @id @default(cuid())
+  enquiryId      String    @unique @default(cuid())
   propertyName   String?
   propertyImages String?
   fullName       String
   email          String
   phone          String?
   gender         String?
-  guests         Int      @default(1)
+  guests         Int       @default(1)
   totalAmount    Float?
   message        String?
   checkin        DateTime?
   checkout       DateTime?
   nights         Int?
-  status         String   @default("PENDING") // PENDING, ACCEPTED, REJECTED, BOOKED, CANCELLED
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  status         String    @default("PENDING") // PENDING, ACCEPTED, REJECTED, BOOKED, CANCELLED
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   propertyId String
   property   Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
@@ -101,8 +101,8 @@ model SubscriptionPlan {
   name         String
   price        Float
   specialPrice Float?
-  duration     String   // Monthly, Yearly
-  features     String?  // JSON string array
+  duration     String // Monthly, Yearly
+  features     String? // JSON string array
   status       String   @default("Active") // Active, Inactive
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
@@ -121,7 +121,7 @@ model UserSubscription {
   userId  String
   user    User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   planId  String
-  plan    SubscriptionPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  plan    SubscriptionPlan @relation(fields: [planId], references: [id], onDelete: Restrict)
   payment Payment?
 }
 
@@ -132,7 +132,7 @@ model Payment {
   amount          Float
   currency        String   @default("USD")
   status          String   @default("created") // created, paid, failed
-  type            String   // subscription, booking
+  type            String // subscription, booking
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
@@ -144,45 +144,44 @@ model Payment {
 
 // Guest contact requests (no auth required for guests)
 model GuestRequest {
-  id           String   @id @default(cuid())
-  fullName     String
-  email        String
-  phone        String?
-  message      String?
-  checkin      DateTime?
-  checkout     DateTime?
-  guests       Int      @default(1)
-  status       String   @default("NEW") // NEW, VIEWED, CONTACTED, CLOSED
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id        String    @id @default(cuid())
+  fullName  String
+  email     String
+  phone     String?
+  message   String?
+  checkin   DateTime?
+  checkout  DateTime?
+  guests    Int       @default(1)
+  status    String    @default("NEW") // NEW, VIEWED, CONTACTED, CLOSED
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
 
-  propertyId   String
-  property     Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  propertyId String
+  property   Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
 }
 
 // Confirmed bookings (instant reservations)
 model Booking {
-  id            String   @id @default(cuid())
-  bookingId     String   @unique @default(cuid())
-  propertyId    String
-  guestName     String
-  guestEmail    String
-  guestPhone    String?
-  checkin       DateTime
-  checkout      DateTime
-  guests        Int      @default(1)
-  nights        Int
-  nightlyRate   Int
-  totalAmount   Float
-  status        String   @default("CONFIRMED") // CONFIRMED, CANCELLED, COMPLETED
-  notes         String?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id          String   @id @default(cuid())
+  bookingId   String   @unique @default(cuid())
+  propertyId  String
+  guestName   String
+  guestEmail  String
+  guestPhone  String?
+  checkin     DateTime
+  checkout    DateTime
+  guests      Int      @default(1)
+  nights      Int
+  nightlyRate Int
+  totalAmount Float
+  status      String   @default("CONFIRMED") // CONFIRMED, CANCELLED, COMPLETED
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
-  property      Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
 
   @@index([propertyId])
   @@index([checkin, checkout])
   @@index([status])
 }
-

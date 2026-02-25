@@ -15,8 +15,8 @@ const createGuestRequest = async (req, res) => {
         }
 
         // Check if property exists
-        const property = await prisma.property.findUnique({
-            where: { id: propertyId },
+        const property = await prisma.property.findFirst({
+            where: { OR: [{ id: propertyId }, { propertyId }] },
             include: {
                 owner: {
                     select: { id: true, email: true, firstName: true },
@@ -34,7 +34,7 @@ const createGuestRequest = async (req, res) => {
         // Create the guest request
         const guestRequest = await prisma.guestRequest.create({
             data: {
-                propertyId,
+                propertyId: property.id,
                 fullName,
                 email,
                 phone,

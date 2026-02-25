@@ -38,6 +38,7 @@ const register = async (req, res) => {
                 address,
                 role: userRole,
                 verifyToken,
+                profilePic: req.file ? `/uploads/${req.file.filename}` : null,
             },
             select: {
                 id: true,
@@ -314,7 +315,11 @@ const editProfile = async (req, res) => {
         if (countryCode !== undefined) updateData.countryCode = countryCode;
         if (phoneNumber !== undefined) updateData.phoneNumber = phoneNumber;
         if (address !== undefined) updateData.address = address;
-        if (profilePic !== undefined) updateData.profilePic = profilePic;
+        if (req.file) {
+            updateData.profilePic = `/uploads/${req.file.filename}`;
+        } else if (profilePic !== undefined) {
+            updateData.profilePic = profilePic;
+        }
         if (about !== undefined) updateData.about = about;
 
         const user = await prisma.user.update({

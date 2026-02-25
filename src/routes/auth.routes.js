@@ -3,6 +3,7 @@ const { body } = require('express-validator');
 const router = express.Router();
 const authController = require('../controllers/auth.controller');
 const { authenticate } = require('../middleware/auth');
+const { uploadSingle } = require('../middleware/upload');
 
 // Validation middleware
 const registerValidation = [
@@ -18,16 +19,15 @@ const loginValidation = [
 ];
 
 // Routes
-router.post('/register', registerValidation, authController.register);
+router.post('/register', uploadSingle, registerValidation, authController.register);
 router.post('/login', loginValidation, authController.login);
 router.get('/verify-email/:token', authController.verifyEmail);
 router.post('/forgot-password', body('email').isEmail(), authController.forgotPassword);
 router.post('/reset-password', [
-    body('token').notEmpty(),
     body('password').isLength({ min: 6 }),
 ], authController.resetPassword);
 router.get('/me', authenticate, authController.getMe);
-router.put('/edit-profile', authenticate, authController.editProfile);
+router.put('/edit-profile', authenticate, uploadSingle, authController.editProfile);
 router.put('/change-password', authenticate, authController.changePassword);
 
 module.exports = router;

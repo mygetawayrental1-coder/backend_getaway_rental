@@ -366,7 +366,7 @@ const getPropertiesByLocation = async (req, res) => {
     try {
         const { name, checkin, checkout, guests } = req.method === 'GET' ? req.query : req.body;
 
-        const where = { status: 'APPROVED' };
+        const where = { status: 'Active' };
         if (name) {
             where.OR = [
                 { location: { contains: name } },
@@ -401,7 +401,7 @@ const getLocationSuggestions = async (req, res) => {
 
         const locations = await prisma.property.findMany({
             where: {
-                status: 'APPROVED',
+                status: 'Active',
                 OR: [
                     { location: { contains: q } },
                     { state: { contains: q } },
