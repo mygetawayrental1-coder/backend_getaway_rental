@@ -16,17 +16,27 @@ const dashboardRoutes = require('./routes/dashboard.routes');
 const captchaRoutes = require('./routes/captcha.routes');
 const guestRequestRoutes = require('./routes/guestRequest.routes');
 const bookingRoutes = require('./routes/booking.routes');
+const ownerRequestRoutes = require('./routes/ownerRequest.routes');
+const icalRoutes = require('./routes/ical.routes');
+const { startIcalScheduler } = require('./utils/ical.scheduler');
 
 const app = express();
 
+// Start background cron jobs
+startIcalScheduler();
+
 // Middleware
 app.use(morgan('dev')); // Log HTTP requests
+// Allowed origins for CORS
+const allowedOrigins = [
+    process.env.FRONTEND_URL || 'http://localhost:5173',      // Admin portal
+    process.env.APP_URL || 'http://localhost:5000',            // Backend self
+    'https://mgwr-admin.vercel.app',                          // Deployed admin portal
+    'https://backend-getaway-rental.onrender.com',            // Deployed backend
+];
+
 app.use(cors({
-    origin: [
-        process.env.FRONTEND_URL || 'http://localhost:5173',
-        'http://localhost:3000',
-        'http://localhost:8080',
-    ],
+    origin: '*',
     credentials: true,
 }));
 app.use(express.json({ limit: '10mb' }));
@@ -53,6 +63,7 @@ app.get('/', (req, res) => {
             uploads: '/uploads',
             dashboard: '/dashboard',
             bookings: '/bookings',
+            ical: '/ical',
         },
     });
 });
@@ -67,11 +78,12 @@ app.use('/owners', ownerRoutes);
 app.use('/subscriptions', subscriptionRoutes);
 app.use('/payments', paymentRoutes);
 app.use('/uploads', uploadRoutes);
-app.use('/aws', uploadRoutes); // Alias for mobile app backward compatibility
 app.use('/dashboard', dashboardRoutes);
 app.use('/captcha', captchaRoutes);
 app.use('/guest-requests', guestRequestRoutes);
 app.use('/bookings', bookingRoutes);
+app.use('/owner-requests', ownerRequestRoutes);
+app.use('/ical', icalRoutes);
 
 // 404 Handler
 app.use((req, res) => {

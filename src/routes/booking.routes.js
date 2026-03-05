@@ -20,20 +20,8 @@ router.post('/check-availability', bookingController.checkAvailability);
  */
 router.post('/create', bookingController.createBooking);
 
-/**
- * Get booking details by ID or bookingId
- * GET /bookings/:id
- */
-router.get('/:id', bookingController.getBookingById);
-
 // PROTECTED ROUTES - Require authentication (for property owners/admin)
-
-/**
- * Get all bookings for a specific property
- * GET /bookings/property/:propertyId
- * Requires: Owner of property or Admin
- */
-router.get('/property/:propertyId', authenticate, bookingController.getPropertyBookings);
+// NOTE: Static routes MUST be registered BEFORE parameterized /:id routes
 
 /**
  * Get all owner orders (bookings globally across all owner properties)
@@ -43,10 +31,24 @@ router.get('/property/:propertyId', authenticate, bookingController.getPropertyB
 router.get('/owner/orders', authenticate, requireRole(ROLES.OWNER, ROLES.ADMIN), bookingController.getOwnerBookingsGlobal);
 
 /**
+ * Get all bookings for a specific property
+ * GET /bookings/property/:propertyId
+ * Requires: Owner of property or Admin
+ */
+router.get('/property/:propertyId', authenticate, bookingController.getPropertyBookings);
+
+/**
  * Cancel a booking
  * PATCH /bookings/:id/cancel
  * Requires: Authentication (can be enhanced to check if user is guest or owner)
  */
 router.patch('/:id/cancel', authenticate, bookingController.cancelBooking);
+
+/**
+ * Get booking details by ID or bookingId
+ * GET /bookings/:id
+ * NOTE: This MUST be the last GET route to avoid shadowing /owner/orders and /property/:id
+ */
+router.get('/:id', bookingController.getBookingById);
 
 module.exports = router;

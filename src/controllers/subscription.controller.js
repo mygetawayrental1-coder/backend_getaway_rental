@@ -184,11 +184,11 @@ const subscribe = async (req, res) => {
             });
         }
 
-        // Check if user already has active subscription
+        // Check if user already has active or pending subscription
         const existingSubscription = await prisma.userSubscription.findFirst({
             where: {
                 userId,
-                status: 'ACTIVE',
+                status: { in: ['ACTIVE', 'PENDING'] },
                 endDate: { gt: new Date() },
             },
         });
@@ -216,7 +216,7 @@ const subscribe = async (req, res) => {
                 planId,
                 startDate,
                 endDate,
-                status: 'ACTIVE',
+                status: 'PENDING', // Subscriptions start as PENDING until payment completes
             },
             include: {
                 plan: true,
@@ -245,7 +245,7 @@ const getMySubscription = async (req, res) => {
         const subscription = await prisma.userSubscription.findFirst({
             where: {
                 userId,
-                status: 'ACTIVE',
+                status: { in: ['ACTIVE', 'PENDING', 'COMPLETED'] },
             },
             orderBy: { createdAt: 'desc' },
             include: {
@@ -275,7 +275,7 @@ const cancelSubscription = async (req, res) => {
         const subscription = await prisma.userSubscription.findFirst({
             where: {
                 userId,
-                status: 'ACTIVE',
+                status: { in: ['ACTIVE', 'PENDING'] },
             },
         });
 

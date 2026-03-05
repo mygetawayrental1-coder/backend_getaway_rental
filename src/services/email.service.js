@@ -2,38 +2,38 @@ const nodemailer = require('nodemailer');
 
 // Create transporter
 const transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
-    port: parseInt(process.env.SMTP_PORT) || 587,
-    secure: false, // true for 465, false for other ports
-    auth: {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS,
-    },
+  host: process.env.SMTP_HOST,
+  port: parseInt(process.env.SMTP_PORT) || 587,
+  secure: false, // true for 465, false for other ports
+  auth: {
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS,
+  },
 });
 
 // Send email function
 const sendEmail = async ({ to, subject, html, text }) => {
-    try {
-        const info = await transporter.sendMail({
-            from: process.env.FROM_EMAIL || process.env.SMTP_USER,
-            to,
-            subject,
-            text,
-            html,
-        });
-        console.log('Email sent:', info.messageId);
-        return info;
-    } catch (error) {
-        console.error('Email error:', error);
-        throw error;
-    }
+  try {
+    const info = await transporter.sendMail({
+      from: process.env.FROM_EMAIL || process.env.SMTP_USER,
+      to,
+      subject,
+      text,
+      html,
+    });
+    console.log('Email sent:', info.messageId);
+    return info;
+  } catch (error) {
+    console.error('Email error:', error);
+    throw error;
+  }
 };
 
 // Send email verification
 const sendVerificationEmail = async (email, token) => {
-    const verifyUrl = `${process.env.APP_URL}/auth/verify-email/${token}`;
+  const verifyUrl = `${process.env.APP_URL}/auth/verify-email/${token}`;
 
-    const html = `
+  const html = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
       <h2 style="color: #10B981;">Welcome to MyGatewayRental!</h2>
       <p>Thank you for registering. Please verify your email address by clicking the button below:</p>
@@ -48,19 +48,19 @@ const sendVerificationEmail = async (email, token) => {
     </div>
   `;
 
-    return sendEmail({
-        to: email,
-        subject: 'Verify your email - MyGatewayRental',
-        html,
-        text: `Welcome to MyGatewayRental! Verify your email: ${verifyUrl}`,
-    });
+  return sendEmail({
+    to: email,
+    subject: 'Verify your email - MyGatewayRental',
+    html,
+    text: `Welcome to MyGatewayRental! Verify your email: ${verifyUrl}`,
+  });
 };
 
 // Send password reset email
 const sendPasswordResetEmail = async (email, token) => {
-    const resetUrl = `${process.env.FRONTEND_URL}/reset-password?token=${token}`;
+  const resetUrl = `${process.env.FRONTEND_URL}/reset-password?token=${token}`;
 
-    const html = `
+  const html = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
       <h2 style="color: #10B981;">Password Reset Request</h2>
       <p>You have requested to reset your password. Click the button below to proceed:</p>
@@ -75,17 +75,17 @@ const sendPasswordResetEmail = async (email, token) => {
     </div>
   `;
 
-    return sendEmail({
-        to: email,
-        subject: 'Reset your password - MyGatewayRental',
-        html,
-        text: `Reset your password: ${resetUrl}`,
-    });
+  return sendEmail({
+    to: email,
+    subject: 'Reset your password - MyGatewayRental',
+    html,
+    text: `Reset your password: ${resetUrl}`,
+  });
 };
 
 // Send inquiry notification to owner
 const sendInquiryNotification = async (ownerEmail, inquiry) => {
-    const html = `
+  const html = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
       <h2 style="color: #10B981;">New Booking Inquiry!</h2>
       <p>You have received a new booking inquiry for your property.</p>
@@ -103,17 +103,46 @@ const sendInquiryNotification = async (ownerEmail, inquiry) => {
     </div>
   `;
 
-    return sendEmail({
-        to: ownerEmail,
-        subject: `New Inquiry for ${inquiry.propertyName} - MyGatewayRental`,
-        html,
-        text: `New booking inquiry from ${inquiry.fullName} for ${inquiry.propertyName}`,
-    });
+  return sendEmail({
+    to: ownerEmail,
+    subject: `New Inquiry for ${inquiry.propertyName} - MyGatewayRental`,
+    html,
+    text: `New booking inquiry from ${inquiry.fullName} for ${inquiry.propertyName}`,
+  });
+};
+
+// Send guest request notification to owner
+const sendGuestRequestNotification = async (ownerEmail, request) => {
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <h2 style="color: #10B981;">New Guest Request!</h2>
+      <p>You have received a new contact request from a guest for your property.</p>
+      <div style="background-color: #f9fafb; padding: 16px; border-radius: 8px; margin: 16px 0;">
+        <p><strong>Property:</strong> ${request.propertyName}</p>
+        <p><strong>Guest Name:</strong> ${request.fullName}</p>
+        <p><strong>Email:</strong> ${request.email}</p>
+        <p><strong>Phone:</strong> ${request.phone || 'Not provided'}</p>
+        <p><strong>Check-in:</strong> ${request.checkin ? new Date(request.checkin).toLocaleDateString() : 'Flexible'}</p>
+        <p><strong>Check-out:</strong> ${request.checkout ? new Date(request.checkout).toLocaleDateString() : 'Flexible'}</p>
+        <p><strong>Guests:</strong> ${request.guests || 1}</p>
+        <p><strong>Message:</strong> ${request.message || 'No message'}</p>
+      </div>
+      <p>Log in to your dashboard to contact the guest and respond to this request.</p>
+    </div>
+  `;
+
+  return sendEmail({
+    to: ownerEmail,
+    subject: `New Guest Request for ${request.propertyName} - MyGatewayRental`,
+    html,
+    text: `New guest request from ${request.fullName} for ${request.propertyName}`,
+  });
 };
 
 module.exports = {
-    sendEmail,
-    sendVerificationEmail,
-    sendPasswordResetEmail,
-    sendInquiryNotification,
+  sendEmail,
+  sendVerificationEmail,
+  sendPasswordResetEmail,
+  sendInquiryNotification,
+  sendGuestRequestNotification,
 };

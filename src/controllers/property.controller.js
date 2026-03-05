@@ -32,10 +32,18 @@ const createProperty = async (req, res) => {
             amenities,
             about,
             policyAndHouseRules,
-            images,
             icalUrls,
             emailId,
         } = req.body;
+
+        // Extract image URLs from req.files (added by uploadMultiple middleware)
+        let images = [];
+        if (req.files && req.files.length > 0) {
+            images = req.files.map(file => `/uploads/${file.filename}`);
+        } else if (req.body.images) {
+            // Fallback if images were sent as a raw string or array (e.g. from postman)
+            images = Array.isArray(req.body.images) ? req.body.images : [req.body.images];
+        }
 
         // Get owner ID from authenticated user or email
         let ownerId = req.user.id;
@@ -109,6 +117,11 @@ const getAllProperties = async (req, res) => {
                 { location: { contains: search } },
                 { about: { contains: search } },
             ];
+        }
+
+        // Filter by owner if the authenticated user is an OWNER
+        if (req.user && req.user.role === 'OWNER') {
+            where.ownerId = req.user.id;
         }
 
         const [properties, total] = await Promise.all([
@@ -275,14 +288,13 @@ const updateProperty = async (req, res) => {
             });
         }
 
-        // Prepare update data
         const data = {};
         const fields = [
             'propertyName', 'location', 'state', 'country', 'latitude', 'longitude',
             'about', 'policyAndHouseRules', 'status'
         ];
         const intFields = ['guests', 'bedrooms', 'bathrooms', 'kitchens', 'minRate', 'nightlyRate', 'weekendRate', 'weeklyRate', 'monthlyRate'];
-        const jsonFields = ['additionalCharges', 'amenities', 'images', 'icalUrls'];
+        const jsonFields = ['additionalCharges', 'amenities', 'icalUrls'];
         const dateFields = ['ratePeriodStart', 'ratePeriodEnd'];
 
         fields.forEach(field => {
@@ -297,6 +309,28 @@ const updateProperty = async (req, res) => {
         dateFields.forEach(field => {
             if (updateData[field] !== undefined) data[field] = updateData[field] ? new Date(updateData[field]) : null;
         });
+
+        // Handle image updates
+        let existingImages = [];
+        if (updateData.images) {
+            // If the client sends back existing image URLs to keep
+            existingImages = Array.isArray(updateData.images) ? updateData.images : [updateData.images];
+        } else if (property.images) {
+            try {
+                // If nothing was passed, preserve existing ones (or client can pass empty array to clear)
+                existingImages = JSON.parse(property.images);
+            } catch (e) { }
+        }
+
+        let newImages = [];
+        if (req.files && req.files.length > 0) {
+            newImages = req.files.map(file => `/uploads/${file.filename}`);
+        }
+
+        // Combine them if any exist, otherwise omit the field
+        if (existingImages.length > 0 || newImages.length > 0) {
+            data.images = stringifyJsonField([...existingImages, ...newImages]);
+        }
 
         const updated = await prisma.property.update({
             where: { id: property.id },

@@ -1,6 +1,7 @@
 const prisma = require('../config/database');
 const { sendInquiryNotification } = require('../services/email.service');
 const { calculateNights, getPagination, formatPaginatedResponse } = require('../utils/helpers');
+const icalService = require('../services/ical.service');
 
 // Create inquiry
 const createInquiry = async (req, res) => {
@@ -76,6 +77,15 @@ const createInquiry = async (req, res) => {
             console.error('Failed to send inquiry notification:', emailError);
         }
 
+        // Create internal iCal event
+        try {
+            if (inquiry.checkin && inquiry.checkout) {
+                await icalService.createEventForInternalBooking(inquiry);
+            }
+        } catch (icalError) {
+            console.error('Failed to create internal iCal event:', icalError);
+        }
+
         res.status(201).json({
             success: true,
             message: 'Inquiry submitted successfully.',
@@ -86,7 +96,6 @@ const createInquiry = async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Failed to submit inquiry.',
-            error: error.message,
         });
     }
 };

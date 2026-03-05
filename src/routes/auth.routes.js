@@ -1,9 +1,9 @@
 const express = require('express');
-const { body } = require('express-validator');
+const { body, validationResult } = require('express-validator');
 const router = express.Router();
 const authController = require('../controllers/auth.controller');
 const { authenticate } = require('../middleware/auth');
-const { uploadSingle } = require('../middleware/upload');
+const { upload } = require('../config/storage');
 
 // Validation middleware
 const registerValidation = [
@@ -18,16 +18,29 @@ const loginValidation = [
     body('password').notEmpty().withMessage('Password is required'),
 ];
 
+// Handle Validation Errors
+const handleValidationErrors = (req, res, next) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({
+            success: false,
+            message: errors.array().map(err => err.msg).join(', '),
+            errors: errors.array()
+        });
+    }
+    next();
+};
+
 // Routes
-router.post('/register', uploadSingle, registerValidation, authController.register);
-router.post('/login', loginValidation, authController.login);
+router.post('/register', upload.single('profilePic'), registerValidation, handleValidationErrors, authController.register);
+router.post('/login', loginValidation, handleValidationErrors, authController.login);
 router.get('/verify-email/:token', authController.verifyEmail);
-router.post('/forgot-password', body('email').isEmail(), authController.forgotPassword);
+router.post('/forgot-password', body('email').isEmail(), handleValidationErrors, authController.forgotPassword);
 router.post('/reset-password', [
     body('password').isLength({ min: 6 }),
-], authController.resetPassword);
+], handleValidationErrors, authController.resetPassword);
 router.get('/me', authenticate, authController.getMe);
-router.put('/edit-profile', authenticate, uploadSingle, authController.editProfile);
+router.put('/edit-profile', authenticate, upload.single('profilePic'), authController.editProfile);
 router.put('/change-password', authenticate, authController.changePassword);
 
 module.exports = router;

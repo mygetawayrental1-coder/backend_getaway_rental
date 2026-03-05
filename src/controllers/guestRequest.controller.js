@@ -1,5 +1,6 @@
 const prisma = require('../config/database');
 const { getPagination, formatPaginatedResponse } = require('../utils/helpers');
+const { sendGuestRequestNotification } = require('../services/email.service');
 
 // Create guest request (PUBLIC - no auth required)
 const createGuestRequest = async (req, res) => {
@@ -50,8 +51,22 @@ const createGuestRequest = async (req, res) => {
             },
         });
 
-        // TODO: Send notification email to property owner
-        console.log(`New guest request for property ${property.propertyName} - Owner: ${property.owner.email}`);
+        // Send notification email to property owner
+        try {
+            await sendGuestRequestNotification(property.owner.email, {
+                propertyName: property.propertyName,
+                fullName,
+                email,
+                phone,
+                checkin,
+                checkout,
+                guests,
+                message,
+            });
+            console.log(`Email notification sent to owner: ${property.owner.email}`);
+        } catch (emailError) {
+            console.error('Failed to send guest request notification:', emailError);
+        }
 
         res.status(201).json({
             success: true,

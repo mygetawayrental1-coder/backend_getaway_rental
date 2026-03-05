@@ -20,8 +20,8 @@ const register = async (req, res) => {
         // Hash password
         const hashedPassword = await bcrypt.hash(password, 12);
 
-        // Generate email verification token
-        const verifyToken = generateRandomToken();
+        // Generate email verification token (24 hours expiry)
+        const verifyToken = generateToken({ email }, '24h');
 
         // Determine role (default to OWNER for registration, END_USER for guests)
         const userRole = role === 'END_USER' ? 'END_USER' : 'OWNER';
@@ -73,7 +73,6 @@ const register = async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Registration failed.',
-            error: error.message,
         });
     }
 };
@@ -126,7 +125,6 @@ const login = async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Login failed.',
-            error: error.message,
         });
     }
 };
@@ -136,11 +134,20 @@ const verifyEmail = async (req, res) => {
     try {
         const { token } = req.params;
 
-        const user = await prisma.user.findFirst({ where: { verifyToken: token } });
-        if (!user) {
+        const decoded = require('../services/token.service').verifyToken(token);
+
+        if (!decoded || !decoded.email) {
             return res.status(400).json({
                 success: false,
                 message: 'Invalid or expired verification token.',
+            });
+        }
+
+        const user = await prisma.user.findFirst({ where: { email: decoded.email, verifyToken: token } });
+        if (!user) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid verification token.',
             });
         }
 

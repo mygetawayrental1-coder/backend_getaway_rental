@@ -14,7 +14,7 @@ router.delete('/:id', authenticate, isAdmin, inquiryController.deleteInquiry);
 // Owner routes
 router.get('/fetch-inquiry-emailId/:email', authenticate, requireRole(ROLES.OWNER, ROLES.ADMIN), inquiryController.getInquiriesByEmail);
 router.get('/:id', authenticate, isAdminOrOwner, inquiryController.getInquiryById);
-router.get('/:id/accept', authenticate, requireRole(ROLES.OWNER, ROLES.ADMIN), inquiryController.acceptInquiry);
-router.get('/:id/reject', authenticate, requireRole(ROLES.OWNER, ROLES.ADMIN), inquiryController.rejectInquiry);
+router.patch('/:id/accept', authenticate, requireRole(ROLES.OWNER, ROLES.ADMIN), inquiryController.acceptInquiry);
+router.patch('/:id/reject', authenticate, requireRole(ROLES.OWNER, ROLES.ADMIN), inquiryController.rejectInquiry);
 
 module.exports = router;

@@ -128,7 +128,6 @@ const checkAvailability = async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Failed to check availability.',
-            error: error.message,
         });
     }
 };
@@ -272,7 +271,6 @@ const createBooking = async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Failed to create booking.',
-            error: error.message,
         });
     }
 };
@@ -419,6 +417,11 @@ const cancelBooking = async (req, res) => {
             where: {
                 OR: [{ id }, { bookingId: id }],
             },
+            include: {
+                property: {
+                    select: { ownerId: true },
+                },
+            },
         });
 
         if (!booking) {
@@ -432,6 +435,18 @@ const cancelBooking = async (req, res) => {
             return res.status(400).json({
                 success: false,
                 message: 'Booking is already cancelled.',
+            });
+        }
+
+        // Authorization: only property owner, admin, or the guest who booked
+        const isOwner = booking.property.ownerId === req.user.id;
+        const isAdmin = req.user.role === 'ADMIN';
+        const isGuest = booking.guestEmail === req.user.email;
+
+        if (!isOwner && !isAdmin && !isGuest) {
+            return res.status(403).json({
+                success: false,
+                message: 'Access denied. Only the property owner or the guest can cancel this booking.',
             });
         }
 
