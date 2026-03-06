@@ -1,30 +1,22 @@
-const nodemailer = require('nodemailer');
+const { Resend } = require('resend');
 
-// Create transporter
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST,
-  port: parseInt(process.env.SMTP_PORT) || 587,
-  secure: false, // true for 465, false for other ports
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
-});
+const resend = new Resend(process.env.RESEND_API_KEY);
+const FROM_EMAIL = process.env.FROM_EMAIL || 'MyGatewayRental <noreply@mygatwayrental.com>';
 
 // Send email function
 const sendEmail = async ({ to, subject, html, text }) => {
   try {
-    const info = await transporter.sendMail({
-      from: process.env.FROM_EMAIL || process.env.SMTP_USER,
-      to,
+    const data = await resend.emails.send({
+      from: FROM_EMAIL,
+      to: Array.isArray(to) ? to : [to],
       subject,
-      text,
       html,
+      text,
     });
-    console.log('Email sent:', info.messageId);
-    return info;
+    console.log('Email sent via Resend:', data.id);
+    return data;
   } catch (error) {
-    console.error('Email error:', error);
+    console.error('Resend email error:', error);
     throw error;
   }
 };
