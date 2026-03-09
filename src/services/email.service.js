@@ -1,23 +1,104 @@
-const { Resend } = require('resend');
+const nodemailer = require('nodemailer');
 
-const resend = new Resend(process.env.RESEND_API_KEY);
-const FROM_EMAIL = process.env.FROM_EMAIL || 'MyGatewayRental <noreply@mygatwayrental.com>';
+// Ensure native SMTP configuration with Brevo Relay parameters
+const transporter = nodemailer.createTransport({
+  host: 'smtp-relay.brevo.com',
+  port: 587,
+  secure: false, // true for 465, false for other ports
+  auth: {
+    user: process.env.BREVO_SMTP_USER || 'a46cd0001@smtp-brevo.com',
+    pass: process.env.BREVO_SMTP_PASS || 'xsmtpsib-REDACTED', // Provided SMTP Key
+  },
+});
 
-// Send email function
+const FROM_EMAIL = process.env.BREVO_FROM_EMAIL || 'mdkabir3350@gmail.com';
+const FROM_NAME = process.env.BREVO_FROM_NAME || 'MyGatewayRental';
+
+// Generic Send email wrapper
 const sendEmail = async ({ to, subject, html, text }) => {
   try {
-    const data = await resend.emails.send({
-      from: FROM_EMAIL,
-      to: Array.isArray(to) ? to : [to],
-      subject,
-      html,
-      text,
-    });
-    console.log('Email sent via Resend:', data.id);
+    const mailOptions = {
+      from: `"${FROM_NAME}" <${FROM_EMAIL}>`, // sender address
+      to: Array.isArray(to) ? to.join(', ') : to, // list of receivers
+      subject: subject,
+      text: text, // plain text body
+      html: html, // html body
+    };
+
+    const data = await transporter.sendMail(mailOptions);
+    console.log('Email sent via Brevo SMTP:', data.messageId);
     return data;
   } catch (error) {
-    console.error('Resend email error:', error);
+    console.error('Brevo SMTP email error:', error);
     throw error;
+  }
+};
+
+const sendCustomPricingOwnerConfirmation = async (ownerEmail, ownerName, planName) => {
+  try {
+    const planText = planName ? ` for the ${planName} plan` : '';
+
+    const html = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
+            <h2>Request Received</h2>
+            <p>Hi ${ownerName},</p>
+            <p>Thank you for requesting a custom pricing offer${planText}. We have received your request and our team is currently reviewing your details.</p>
+            <p>We will get back to you shortly with a personalized offer that fits your needs.</p>
+            <hr style="border: none; border-top: 1px solid #eaeaea; margin: 20px 0;" />
+            <p>Best regards,</p>
+            <p><strong>The MyGetawayRental Team</strong></p>
+            <p style="font-size: 12px; color: #888;">If you have any immediate questions, feel free to reply to this email.</p>
+        </div>
+    `;
+
+    const data = await sendEmail({
+      to: ownerEmail,
+      subject: 'We Received Your Custom Pricing Request',
+      html
+    });
+    console.log("Custom Pricing Confirmation email successfully sent to owner", data);
+    return data;
+  } catch (error) {
+    console.error("Error sending custom pricing confirmation to owner:", error);
+    return error;
+  }
+};
+
+const sendCustomPricingAdminNotification = async (ownerName, ownerEmail, planName, requestedPrice, phone, message, numProperties) => {
+  try {
+    const adminEmail = process.env.ADMIN_EMAIL || 'mygatewayrentals@gmail.com';
+    const planText = planName || 'None Specified';
+
+    const html = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
+            <h2>New Custom Pricing Request</h2>
+            <p><strong>Owner Name:</strong> ${ownerName}</p>
+            <p><strong>Email Address:</strong> ${ownerEmail}</p>
+            <p><strong>Phone Number:</strong> ${phone || 'Not Provided'}</p>
+            <hr style="border: none; border-top: 1px solid #eaeaea; margin: 20px 0;" />
+            <h3>Request Details</h3>
+            <p><strong>Target Plan:</strong> ${planText}</p>
+            <p><strong>Properties Count:</strong> ${numProperties}</p>
+            <p><strong>Requested Price:</strong> $${requestedPrice}</p>
+            <p><strong>Additional Message:</strong></p>
+            <blockquote style="margin: 0; padding: 10px 15px; border-left: 4px solid #007bff; background: #f9f9f9;">
+                ${message || 'No additional message provided.'}
+            </blockquote>
+            <hr style="border: none; border-top: 1px solid #eaeaea; margin: 20px 0;" />
+            <p>Log in to the Admin Portal to manage this request.</p>
+        </div>
+    `;
+
+    const data = await sendEmail({
+      to: adminEmail,
+      subject: `New Custom Pricing Request from ${ownerName}`,
+      html
+    });
+    console.log("Custom Pricing Notification email successfully sent to Admin", data);
+    return data;
+  } catch (error) {
+    console.error("Error sending custom pricing notification to admin:", error);
+    return error;
   }
 };
 
@@ -131,10 +212,84 @@ const sendGuestRequestNotification = async (ownerEmail, request) => {
   });
 };
 
+// Send inquiry confirmation to guest 
+const sendInquiryConfirmationToGuest = async (guestEmail, inquiry) => {
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <h2 style="color: #10B981;">Booking Inquiry Submitted!</h2>
+      <p>Hi ${inquiry.fullName},</p>
+      <p>Your booking inquiry for <strong>${inquiry.propertyName}</strong> has been successfully submitted to the host. They will review your request and get back to you soon.</p>
+      <div style="background-color: #f9fafb; padding: 16px; border-radius: 8px; margin: 16px 0;">
+        <p><strong>Property:</strong> ${inquiry.propertyName}</p>
+        <p><strong>Check-in:</strong> ${inquiry.checkin}</p>
+        <p><strong>Check-out:</strong> ${inquiry.checkout}</p>
+        <p><strong>Guests:</strong> ${inquiry.guests}</p>
+      </div>
+      <p>Thank you for using MyGatewayRental!</p>
+    </div>
+  `;
+
+  return sendEmail({
+    to: guestEmail,
+    subject: `Booking Inquiry Submitted: ${inquiry.propertyName}`,
+    html,
+    text: `Your booking inquiry for ${inquiry.propertyName} has been submitted to the host.`,
+  });
+};
+
+// Send inquiry accepted notification to guest
+const sendInquiryAcceptedNotification = async (guestEmail, inquiry) => {
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <h2 style="color: #10B981;">Your Booking Inquiry was Accepted! 🎉</h2>
+      <p>Hi ${inquiry.fullName},</p>
+      <p>Great news! The host has accepted your booking inquiry for <strong>${inquiry.propertyName}</strong>.</p>
+      <div style="background-color: #f9fafb; padding: 16px; border-radius: 8px; margin: 16px 0;">
+        <p><strong>Property:</strong> ${inquiry.propertyName}</p>
+        <p><strong>Check-in:</strong> ${inquiry.checkin ? new Date(inquiry.checkin).toLocaleDateString() : ''}</p>
+        <p><strong>Check-out:</strong> ${inquiry.checkout ? new Date(inquiry.checkout).toLocaleDateString() : ''}</p>
+        <p><strong>Total Amount:</strong> $${inquiry.totalAmount}</p>
+      </div>
+      <p>Please log in to your account to complete your booking and payment.</p>
+    </div>
+  `;
+
+  return sendEmail({
+    to: guestEmail,
+    subject: `Inquiry Accepted: ${inquiry.propertyName}`,
+    html,
+    text: `Your booking inquiry for ${inquiry.propertyName} has been accepted by the host.`,
+  });
+};
+
+// Send inquiry rejected notification to guest 
+const sendInquiryRejectedNotification = async (guestEmail, inquiry) => {
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <h2 style="color: #EF4444;">Update on your Booking Inquiry</h2>
+      <p>Hi ${inquiry.fullName},</p>
+      <p>Unfortunately, the host is unable to accommodate your booking for <strong>${inquiry.propertyName}</strong> at this time, and your inquiry has been declined.</p>
+      <p>We encourage you to browse other amazing properties available on MyGatewayRental for your dates!</p>
+    </div>
+  `;
+
+  return sendEmail({
+    to: guestEmail,
+    subject: `Update regarding your inquiry for ${inquiry.propertyName}`,
+    html,
+    text: `Your booking inquiry for ${inquiry.propertyName} has been declined.`,
+  });
+};
+
 module.exports = {
   sendEmail,
   sendVerificationEmail,
   sendPasswordResetEmail,
   sendInquiryNotification,
   sendGuestRequestNotification,
+  sendInquiryConfirmationToGuest,
+  sendInquiryAcceptedNotification,
+  sendInquiryRejectedNotification,
+  sendCustomPricingOwnerConfirmation,
+  sendCustomPricingAdminNotification,
 };

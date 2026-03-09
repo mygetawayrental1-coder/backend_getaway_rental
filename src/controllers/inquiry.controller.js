@@ -1,7 +1,13 @@
 const prisma = require('../config/database');
-const { sendInquiryNotification } = require('../services/email.service');
+const {
+    sendInquiryNotification,
+    sendInquiryConfirmationToGuest,
+    sendInquiryAcceptedNotification,
+    sendInquiryRejectedNotification
+} = require('../services/email.service');
 const { calculateNights, getPagination, formatPaginatedResponse } = require('../utils/helpers');
 const icalService = require('../services/ical.service');
+const { verifyCaptcha } = require('./captcha.controller');
 
 // Create inquiry
 const createInquiry = async (req, res) => {
@@ -16,7 +22,17 @@ const createInquiry = async (req, res) => {
             message,
             checkin,
             checkout,
+            captchaId,
+            captchaCode
         } = req.body;
+
+        // Verify Captcha before anything else
+        if (!verifyCaptcha(captchaId, captchaCode)) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid or expired captcha.',
+            });
+        }
 
         // Find property
         const property = await prisma.property.findFirst({
@@ -75,6 +91,19 @@ const createInquiry = async (req, res) => {
             });
         } catch (emailError) {
             console.error('Failed to send inquiry notification:', emailError);
+        }
+
+        // Send confirmation to guest
+        try {
+            await sendInquiryConfirmationToGuest(email, {
+                propertyName: property.propertyName,
+                fullName,
+                checkin,
+                checkout,
+                guests,
+            });
+        } catch (emailError) {
+            console.error('Failed to send guest confirmation email:', emailError);
         }
 
         // Create internal iCal event
@@ -281,6 +310,15 @@ const acceptInquiry = async (req, res) => {
             data: { status: 'ACCEPTED' },
         });
 
+        // Send acceptance notification to guest
+        try {
+            if (updated.email) {
+                await sendInquiryAcceptedNotification(updated.email, updated);
+            }
+        } catch (emailError) {
+            console.error('Failed to send inquiry acceptance email:', emailError);
+        }
+
         res.json({
             success: true,
             message: 'Inquiry accepted.',
@@ -330,6 +368,15 @@ const rejectInquiry = async (req, res) => {
             where: { id: inquiry.id },
             data: { status: 'REJECTED' },
         });
+
+        // Send rejection notification to guest
+        try {
+            if (updated.email) {
+                await sendInquiryRejectedNotification(updated.email, updated);
+            }
+        } catch (emailError) {
+            console.error('Failed to send inquiry rejection email:', emailError);
+        }
 
         res.json({
             success: true,

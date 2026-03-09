@@ -1,16 +1,34 @@
 const prisma = require('../config/database');
+const { verifyCaptcha } = require('./captcha.controller');
+const {
+    sendCustomPricingOwnerConfirmation,
+    sendCustomPricingAdminNotification
+} = require('../services/email.service');
 
 // Create custom pricing request
 const createCustomPricingRequest = async (req, res) => {
     try {
-        const { requestedPrice, numProperties, message, phone } = req.body;
+        const { requestedPrice, numProperties, message, phone, captchaId, captchaCode, selectedPlanName } = req.body;
         const userId = req.user.id; // From authenticate middleware
+
+        // Verify Captcha before proceeding
+        if (!verifyCaptcha(captchaId, captchaCode)) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid or expired captcha.',
+            });
+        }
+
+        // Append selected plan to the message for easy admin viewing
+        const finalMessage = selectedPlanName
+            ? `[Target Plan: ${selectedPlanName}]\n\n${message || ''}`.trim()
+            : message;
 
         const newRequest = await prisma.ownerRequest.create({
             data: {
                 requestedPrice: parseFloat(requestedPrice),
                 numProperties: parseInt(numProperties),
-                message,
+                message: finalMessage,
                 phone,
                 userId,
                 type: 'CUSTOM_PRICING',
@@ -26,6 +44,24 @@ const createCustomPricingRequest = async (req, res) => {
                 }
             }
         });
+
+        // Extract user data for emails
+        const ownerEmail = newRequest.user.email;
+        const ownerName = newRequest.user.firstName;
+
+        // Dispatch Emails Asynchronously
+        Promise.all([
+            sendCustomPricingOwnerConfirmation(ownerEmail, ownerName, selectedPlanName),
+            sendCustomPricingAdminNotification(
+                ownerName,
+                ownerEmail,
+                selectedPlanName,
+                requestedPrice,
+                phone,
+                message,
+                numProperties
+            )
+        ]).catch(err => console.error("Error dispatching custom pricing emails:", err));
 
         res.status(201).json({
             success: true,

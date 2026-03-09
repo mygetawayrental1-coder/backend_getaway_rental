@@ -65,30 +65,34 @@ const regenerateCaptcha = async (req, res) => {
     }
 };
 
+const verifyCaptcha = (captchaId, answer) => {
+    if (!captchaId || !answer) return false;
+
+    const stored = captchaStore.get(captchaId);
+    if (!stored) return false;
+
+    if (Date.now() > stored.expires) {
+        captchaStore.delete(captchaId);
+        return false;
+    }
+
+    if (stored.text.toUpperCase() === answer.toUpperCase()) {
+        captchaStore.delete(captchaId); // valid once
+        return true;
+    }
+
+    return false;
+};
+
 const validateCaptcha = async (req, res) => {
     try {
         const { captchaId, answer } = req.body;
+        const isValid = verifyCaptcha(captchaId, answer);
 
-        if (!captchaId || !answer) {
-            return res.status(400).json({ success: false, message: 'ID and answer are required.', valid: false });
-        }
-
-        const stored = captchaStore.get(captchaId);
-
-        if (!stored) {
-            return res.status(400).json({ success: false, message: 'Captcha expired or invalid.', valid: false });
-        }
-
-        if (Date.now() > stored.expires) {
-            captchaStore.delete(captchaId);
-            return res.status(400).json({ success: false, message: 'Captcha expired.', valid: false });
-        }
-
-        if (stored.text.toUpperCase() === answer.toUpperCase()) {
-            captchaStore.delete(captchaId);
+        if (isValid) {
             return res.json({ success: true, valid: true });
         } else {
-            return res.json({ success: false, valid: false, message: 'Incorrect captcha answer.' });
+            return res.json({ success: false, valid: false, message: 'Incorrect, expired or missing captcha.' });
         }
     } catch (error) {
         console.error('Validate captcha error:', error);
@@ -99,5 +103,6 @@ const validateCaptcha = async (req, res) => {
 module.exports = {
     createCaptcha,
     regenerateCaptcha,
-    validateCaptcha
+    validateCaptcha,
+    verifyCaptcha
 };

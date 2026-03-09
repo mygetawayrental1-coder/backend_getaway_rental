@@ -3,10 +3,21 @@ const prisma = require('../config/database');
 const { generateToken, generateRandomToken, generateResetToken } = require('../services/token.service');
 const { sendVerificationEmail, sendPasswordResetEmail } = require('../services/email.service');
 
+const { verifyCaptcha } = require('./captcha.controller');
+
 // Register new user
 const register = async (req, res) => {
     try {
-        const { email, password, firstName, lastName, countryCode, phoneNumber, address, role } = req.body;
+        const { email, password, firstName, lastName, countryCode, phoneNumber, address, role, captchaId, captchaCode } = req.body;
+
+        // Verify captcha first
+        const isCaptchaValid = verifyCaptcha(captchaId, captchaCode);
+        if (!isCaptchaValid) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid or expired captcha. Please try again.',
+            });
+        }
 
         // Check if user exists
         const existingUser = await prisma.user.findUnique({ where: { email } });

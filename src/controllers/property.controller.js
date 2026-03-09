@@ -1,4 +1,5 @@
 const prisma = require('../config/database');
+const { verifyCaptcha } = require('./captcha.controller');
 const {
     stringifyJsonField,
     formatPropertyResponse,
@@ -34,7 +35,24 @@ const createProperty = async (req, res) => {
             policyAndHouseRules,
             icalUrls,
             emailId,
+            captchaId,
+            captchaCode,
         } = req.body;
+
+        // Verify Captcha before proceeding
+        if (!captchaId || !captchaCode) {
+            return res.status(400).json({
+                success: false,
+                message: 'Captcha is required.',
+            });
+        }
+        const isCaptchaValid = verifyCaptcha(captchaId, captchaCode);
+        if (!isCaptchaValid) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid captcha.',
+            });
+        }
 
         // Extract image URLs from req.files (added by uploadMultiple middleware)
         let images = [];
