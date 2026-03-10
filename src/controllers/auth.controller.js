@@ -11,8 +11,10 @@ const register = async (req, res) => {
         const { email, password, firstName, lastName, countryCode, phoneNumber, address, role, captchaId, captchaCode } = req.body;
 
         // Verify captcha first
+        console.log(`[Auth] Verifying captcha: ID=${captchaId}, Code=${captchaCode}`);
         const isCaptchaValid = verifyCaptcha(captchaId, captchaCode);
         if (!isCaptchaValid) {
+            console.warn(`[Auth] Captcha verification failed for ID: ${captchaId}`);
             return res.status(400).json({
                 success: false,
                 message: 'Invalid or expired captcha. Please try again.',
@@ -68,16 +70,9 @@ const register = async (req, res) => {
             console.error('Failed to send verification email:', emailError);
         }
 
-        // Generate JWT
-        const token = generateToken({ userId: user.id, email: user.email, role: user.role });
-
         res.status(201).json({
             success: true,
-            message: 'Registration successful. Please verify your email.',
-            data: {
-                ...user,
-                token
-            },
+            message: 'Registration successful. Please verify your email to activate your account.',
         });
     } catch (error) {
         console.error('Register error:', error);
@@ -108,6 +103,14 @@ const login = async (req, res) => {
             return res.status(401).json({
                 success: false,
                 message: 'Invalid email or password.',
+            });
+        }
+
+        // Check if email is verified
+        if (!user.emailVerified) {
+            return res.status(401).json({
+                success: false,
+                message: 'Please verify your email address before logging in.',
             });
         }
 

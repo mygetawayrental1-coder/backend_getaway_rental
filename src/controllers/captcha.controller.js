@@ -65,7 +65,7 @@ const regenerateCaptcha = async (req, res) => {
     }
 };
 
-const verifyCaptcha = (captchaId, answer) => {
+const verifyCaptcha = (captchaId, answer, consume = true) => {
     if (!captchaId || !answer) return false;
 
     const stored = captchaStore.get(captchaId);
@@ -77,7 +77,9 @@ const verifyCaptcha = (captchaId, answer) => {
     }
 
     if (stored.text.toUpperCase() === answer.toUpperCase()) {
-        captchaStore.delete(captchaId); // valid once
+        if (consume) {
+            captchaStore.delete(captchaId); // valid once
+        }
         return true;
     }
 
@@ -87,7 +89,9 @@ const verifyCaptcha = (captchaId, answer) => {
 const validateCaptcha = async (req, res) => {
     try {
         const { captchaId, answer } = req.body;
-        const isValid = verifyCaptcha(captchaId, answer);
+        // Don't consume on the pure validation route so features 
+        // like Flutter checking it before submit don't break the final API call!
+        const isValid = verifyCaptcha(captchaId, answer, false);
 
         if (isValid) {
             return res.json({ success: true, valid: true });

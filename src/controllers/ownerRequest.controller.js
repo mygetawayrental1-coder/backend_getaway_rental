@@ -12,7 +12,9 @@ const createCustomPricingRequest = async (req, res) => {
         const userId = req.user.id; // From authenticate middleware
 
         // Verify Captcha before proceeding
+        console.log(`[CustomPricing] Verifying captcha: ID=${captchaId}, Code=${captchaCode}`);
         if (!verifyCaptcha(captchaId, captchaCode)) {
+            console.warn(`[CustomPricing] Captcha verification failed for ID: ${captchaId}`);
             return res.status(400).json({
                 success: false,
                 message: 'Invalid or expired captcha.',

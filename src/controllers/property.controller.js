@@ -240,7 +240,7 @@ const getPropertyById = async (req, res) => {
 // Get properties by owner email
 const getPropertiesByEmail = async (req, res) => {
     try {
-        const { email } = req.body;
+        const { email } = req.body || {};
         const paramEmail = req.params.email;
         const ownerEmail = paramEmail || email || req.user.email;
 
