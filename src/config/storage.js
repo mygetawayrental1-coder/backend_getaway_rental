@@ -9,11 +9,25 @@ if (!fs.existsSync(uploadDir)) {
     fs.mkdirSync(uploadDir, { recursive: true });
 }
 
+/** Build a safe subpath under uploadDir from query.folder (blocks .. traversal). */
+function sanitizeUploadSubfolder(folder) {
+    if (!folder || typeof folder !== 'string') {
+        return 'general';
+    }
+    const parts = folder.split(/[/\\]+/).filter(Boolean).map((p) => path.basename(p));
+    const safe = parts.filter((p) => /^[a-zA-Z0-9_-]{1,64}$/.test(p));
+    return safe.length === 0 ? 'general' : path.join(...safe);
+}
+
 // Configure local disk storage
 const storage = multer.diskStorage({
     destination: function (req, file, cb) {
-        const folder = req.query.folder || 'general';
-        const destPath = path.join(uploadDir, folder);
+        const sub = sanitizeUploadSubfolder(req.query.folder);
+        const destPath = path.resolve(uploadDir, sub);
+        const root = path.resolve(uploadDir);
+        if (!destPath.startsWith(root + path.sep) && destPath !== root) {
+            return cb(new Error('Invalid upload folder.'));
+        }
 
         // Create subfolder if it doesn't exist
         if (!fs.existsSync(destPath)) {
@@ -46,10 +60,23 @@ const upload = multer({
     },
 });
 
-// Delete file from local storage
+// Delete file from local storage (relative key only; must stay under uploadDir)
 const deleteLocalFile = async (filePath) => {
     try {
-        const fullPath = path.join(uploadDir, filePath);
+        const relative = String(filePath || '').replace(/\\/g, '/').trim();
+        if (!relative || relative.includes('..')) {
+            throw new Error('Invalid file path');
+        }
+        const segments = relative.split('/').filter(Boolean).map((s) => path.basename(s))
+            .filter((s) => s && s !== '.' && s !== '..');
+        if (segments.length === 0) {
+            throw new Error('Invalid file path');
+        }
+        const fullPath = path.resolve(uploadDir, ...segments);
+        const root = path.resolve(uploadDir);
+        if (!fullPath.startsWith(root + path.sep) && fullPath !== root) {
+            throw new Error('Invalid file path');
+        }
         if (fs.existsSync(fullPath)) {
             fs.unlinkSync(fullPath);
             return true;
@@ -72,4 +99,5 @@ module.exports = {
     deleteLocalFile,
     getFileUrl,
     uploadDir,
+    sanitizeUploadSubfolder,
 };

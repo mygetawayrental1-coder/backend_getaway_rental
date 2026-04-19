@@ -26,8 +26,6 @@ const createInquiry = async (req, res) => {
             captchaCode
         } = req.body;
 
-        // Verify Captcha before anything else
-        console.log(`[Inquiry] Verifying captcha: ID=${captchaId}, Code=${captchaCode}`);
         if (!verifyCaptcha(captchaId, captchaCode)) {
             console.warn(`[Inquiry] Captcha verification failed for ID: ${captchaId}`);
             return res.status(400).json({

@@ -11,8 +11,6 @@ const createCustomPricingRequest = async (req, res) => {
         const { requestedPrice, numProperties, message, phone, captchaId, captchaCode, selectedPlanName } = req.body;
         const userId = req.user.id; // From authenticate middleware
 
-        // Verify Captcha before proceeding
-        console.log(`[CustomPricing] Verifying captcha: ID=${captchaId}, Code=${captchaCode}`);
         if (!verifyCaptcha(captchaId, captchaCode)) {
             console.warn(`[CustomPricing] Captcha verification failed for ID: ${captchaId}`);
             return res.status(400).json({

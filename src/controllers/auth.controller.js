@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const prisma = require('../config/database');
 const { generateToken, generateRandomToken, generateResetToken } = require('../services/token.service');
@@ -10,8 +11,6 @@ const register = async (req, res) => {
     try {
         const { email, password, firstName, lastName, countryCode, phoneNumber, address, role, captchaId, captchaCode } = req.body;
 
-        // Verify captcha first
-        console.log(`[Auth] Verifying captcha: ID=${captchaId}, Code=${captchaCode}`);
         const isCaptchaValid = verifyCaptcha(captchaId, captchaCode);
         if (!isCaptchaValid) {
             console.warn(`[Auth] Captcha verification failed for ID: ${captchaId}`);
@@ -200,8 +199,8 @@ const forgotPassword = async (req, res) => {
             });
         }
 
-        // Generate 6-digit OTP for mobile compatibility
-        const token = Math.floor(100000 + Math.random() * 900000).toString();
+        // 6-digit OTP for mobile compatibility (cryptographically strong)
+        const token = crypto.randomInt(100000, 1000000).toString();
         const expiry = new Date(Date.now() + 3600000); // 1 hour
 
         await prisma.user.update({

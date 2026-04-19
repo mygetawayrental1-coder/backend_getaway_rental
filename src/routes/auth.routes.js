@@ -1,6 +1,24 @@
 const express = require('express');
+const rateLimit = require('express-rate-limit');
 const { body, validationResult } = require('express-validator');
 const router = express.Router();
+
+const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 120,
+    standardHeaders: true,
+    legacyHeaders: false,
+});
+
+const authStrictLimiter = rateLimit({
+    windowMs: 60 * 60 * 1000,
+    max: 25,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { success: false, message: 'Too many attempts. Please try again later.' },
+});
+
+router.use(authLimiter);
 const authController = require('../controllers/auth.controller');
 const { authenticate } = require('../middleware/auth');
 const { upload } = require('../config/storage');
@@ -32,11 +50,11 @@ const handleValidationErrors = (req, res, next) => {
 };
 
 // Routes
-router.post('/register', upload.single('profilePic'), registerValidation, handleValidationErrors, authController.register);
-router.post('/login', loginValidation, handleValidationErrors, authController.login);
-router.get('/verify-email/:token', authController.verifyEmail);
-router.post('/forgot-password', body('email').isEmail(), handleValidationErrors, authController.forgotPassword);
-router.post('/reset-password', [
+router.post('/register', authStrictLimiter, upload.single('profilePic'), registerValidation, handleValidationErrors, authController.register);
+router.post('/login', authStrictLimiter, loginValidation, handleValidationErrors, authController.login);
+router.get('/verify-email/:token', authStrictLimiter, authController.verifyEmail);
+router.post('/forgot-password', authStrictLimiter, body('email').isEmail(), handleValidationErrors, authController.forgotPassword);
+router.post('/reset-password', authStrictLimiter, [
     body('password').isLength({ min: 6 }),
 ], handleValidationErrors, authController.resetPassword);
 router.get('/me', authenticate, authController.getMe);

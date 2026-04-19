@@ -4,7 +4,23 @@ const { upload } = require('../config/storage');
 const uploadSingle = upload.single('file');
 
 // Multiple files upload middleware (max 10)
-const uploadMultiple = upload.array('files', 10);
+// Accept both `files` and `images` keys for compatibility across clients.
+const uploadMultipleBase = upload.fields([
+    { name: 'files', maxCount: 10 },
+    { name: 'images', maxCount: 10 },
+]);
+
+const uploadMultiple = (req, res, next) => {
+    uploadMultipleBase(req, res, (err) => {
+        if (!err && req.files && !Array.isArray(req.files)) {
+            req.files = [
+                ...(req.files.files || []),
+                ...(req.files.images || []),
+            ];
+        }
+        next(err);
+    });
+};
 
 // Handle upload errors
 const handleUploadError = (err, req, res, next) => {

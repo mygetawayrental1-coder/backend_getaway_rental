@@ -1,4 +1,6 @@
+const { Prisma } = require('@prisma/client');
 const prisma = require('../config/database');
+const { verifyToken } = require('../services/token.service');
 
 /**
  * Check property availability for given dates
@@ -194,57 +196,76 @@ const createBooking = async (req, res) => {
             });
         }
 
-        // Double-check availability (prevent race conditions)
-        const conflictingBooking = await prisma.booking.findFirst({
-            where: {
-                propertyId: property.id,
-                status: 'CONFIRMED',
-                OR: [
-                    {
-                        checkin: { lte: checkinDate },
-                        checkout: { gt: checkinDate },
-                    },
-                    {
-                        checkin: { lt: checkoutDate },
-                        checkout: { gte: checkoutDate },
-                    },
-                    {
-                        checkin: { gte: checkinDate },
-                        checkout: { lte: checkoutDate },
-                    },
-                ],
-            },
-        });
+        const overlapWhere = {
+            propertyId: property.id,
+            status: 'CONFIRMED',
+            OR: [
+                {
+                    checkin: { lte: checkinDate },
+                    checkout: { gt: checkinDate },
+                },
+                {
+                    checkin: { lt: checkoutDate },
+                    checkout: { gte: checkoutDate },
+                },
+                {
+                    checkin: { gte: checkinDate },
+                    checkout: { lte: checkoutDate },
+                },
+            ],
+        };
 
-        if (conflictingBooking) {
+        let booking;
+        try {
+            booking = await prisma.$transaction(async (tx) => {
+                const conflictingBooking = await tx.booking.findFirst({
+                    where: overlapWhere,
+                });
+                if (conflictingBooking) {
+                    return null;
+                }
+
+                const nights = Math.ceil((checkoutDate - checkinDate) / (1000 * 60 * 60 * 24));
+                const nightlyRate = property.nightlyRate || property.minRate || 0;
+                const totalAmount = nights * nightlyRate;
+
+                return tx.booking.create({
+                    data: {
+                        propertyId: property.id,
+                        guestName,
+                        guestEmail,
+                        guestPhone,
+                        checkin: checkinDate,
+                        checkout: checkoutDate,
+                        guests: parseInt(guests, 10) || 1,
+                        nights,
+                        nightlyRate,
+                        totalAmount,
+                        notes,
+                        status: 'CONFIRMED',
+                    },
+                });
+            }, {
+                isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+                maxWait: 5000,
+                timeout: 10000,
+            });
+        } catch (error) {
+            if (error.code === 'P2034') {
+                return res.status(409).json({
+                    success: false,
+                    message: 'Could not confirm booking due to a conflict. Please try again.',
+                });
+            }
+            throw error;
+        }
+
+        if (!booking) {
             return res.status(409).json({
                 success: false,
                 message: 'Property is no longer available for the selected dates.',
             });
         }
-
-        // Calculate booking details
-        const nights = Math.ceil((checkoutDate - checkinDate) / (1000 * 60 * 60 * 24));
-        const nightlyRate = property.nightlyRate || property.minRate || 0;
-        const totalAmount = nights * nightlyRate;
-
-        // Create booking
-        const booking = await prisma.booking.create({
-            data: {
-                propertyId: property.id,
-                guestName,
-                guestEmail,
-                guestPhone,
-                checkin: checkinDate,
-                checkout: checkoutDate,
-                guests: parseInt(guests) || 1,
-                nights,
-                nightlyRate,
-                totalAmount,
-                notes,
-                status: 'CONFIRMED',
-            },
-        });
 
         res.status(201).json({
             success: true,
@@ -282,6 +303,21 @@ const createBooking = async (req, res) => {
 const getBookingById = async (req, res) => {
     try {
         const { id } = req.params;
+        const guestEmailQuery = req.query.guestEmail
+            ? String(req.query.guestEmail).trim().toLowerCase()
+            : null;
+
+        let authedUser = null;
+        const authHeader = req.headers.authorization;
+        if (authHeader && authHeader.startsWith('Bearer ')) {
+            const decoded = verifyToken(authHeader.split(' ')[1]);
+            if (decoded?.userId) {
+                authedUser = await prisma.user.findUnique({
+                    where: { id: decoded.userId },
+                    select: { id: true, email: true, role: true },
+                });
+            }
+        }
 
         const booking = await prisma.booking.findFirst({
             where: {
@@ -296,6 +332,7 @@ const getBookingById = async (req, res) => {
                         country: true,
                         images: true,
                         amenities: true,
+                        ownerId: true,
                         owner: {
                             select: {
                                 firstName: true,
@@ -316,6 +353,37 @@ const getBookingById = async (req, res) => {
             });
         }
 
+        const guestEmailNorm = (booking.guestEmail || '').trim().toLowerCase();
+        let allowed = false;
+        if (authedUser) {
+            if (authedUser.role === 'ADMIN') {
+                allowed = true;
+            } else if (booking.property.ownerId === authedUser.id) {
+                allowed = true;
+            } else if (guestEmailNorm && authedUser.email
+                && guestEmailNorm === authedUser.email.trim().toLowerCase()) {
+                allowed = true;
+            }
+        }
+        if (!allowed && guestEmailQuery && guestEmailNorm === guestEmailQuery) {
+            allowed = true;
+        }
+
+        if (!allowed) {
+            if (!authedUser && !guestEmailQuery) {
+                return res.status(401).json({
+                    success: false,
+                    message: 'Sign in, or provide guestEmail matching this booking, to view details.',
+                });
+            }
+            return res.status(403).json({
+                success: false,
+                message: 'Access denied.',
+            });
+        }
+
+        const { ownerId, ...propertyRest } = booking.property;
+
         res.json({
             success: true,
             data: {
@@ -334,13 +402,13 @@ const getBookingById = async (req, res) => {
                 notes: booking.notes,
                 createdAt: booking.createdAt,
                 property: {
-                    propertyName: booking.property.propertyName,
-                    location: booking.property.location,
-                    state: booking.property.state,
-                    country: booking.property.country,
-                    images: booking.property.images,
-                    amenities: booking.property.amenities,
-                    owner: booking.property.owner,
+                    propertyName: propertyRest.propertyName,
+                    location: propertyRest.location,
+                    state: propertyRest.state,
+                    country: propertyRest.country,
+                    images: propertyRest.images,
+                    amenities: propertyRest.amenities,
+                    owner: propertyRest.owner,
                 },
             },
         });

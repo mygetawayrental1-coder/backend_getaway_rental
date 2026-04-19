@@ -22,19 +22,14 @@ const { startIcalScheduler } = require('./utils/ical.scheduler');
 
 const app = express();
 
+// Behind reverse proxies (Render, etc.) so rate limiting and secure cookies work correctly
+app.set('trust proxy', 1);
+
 // Start background cron jobs
 startIcalScheduler();
 
 // Middleware
 app.use(morgan('dev')); // Log HTTP requests
-// Allowed origins for CORS
-const allowedOrigins = [
-    process.env.FRONTEND_URL || 'http://localhost:5173',      // Admin portal
-    process.env.APP_URL || 'http://localhost:5000',            // Backend self
-    'https://mgwr-admin.vercel.app',                          // Deployed admin portal
-    'https://backend-getaway-rental.onrender.com',            // Deployed backend
-];
-
 app.use(cors({
     origin: '*',
     credentials: true,

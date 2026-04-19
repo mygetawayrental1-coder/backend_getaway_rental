@@ -293,9 +293,20 @@ const getOwnerById = async (req, res) => {
             });
         }
 
+        const bookingRevenueAgg = await prisma.booking.aggregate({
+            where: {
+                status: 'CONFIRMED',
+                property: { ownerId: id },
+            },
+            _sum: { totalAmount: true },
+        });
+
         res.json({
             success: true,
-            data: owner,
+            data: {
+                ...owner,
+                bookingRevenue: bookingRevenueAgg._sum.totalAmount || 0,
+            },
         });
     } catch (error) {
         console.error('Get owner by ID error:', error);

@@ -1,3 +1,4 @@
+const { Prisma } = require('@prisma/client');
 const prisma = require('../config/database');
 const { stringifyJsonField, parseJsonField, getPagination, formatPaginatedResponse } = require('../utils/helpers');
 
@@ -184,24 +185,6 @@ const subscribe = async (req, res) => {
             });
         }
 
-        // Check if user already has active or pending subscription
-        const existingSubscription = await prisma.userSubscription.findFirst({
-            where: {
-                userId,
-                status: { in: ['ACTIVE', 'PENDING'] },
-                endDate: { gt: new Date() },
-            },
-        });
-
-        if (existingSubscription) {
-            return res.status(400).json({
-                success: false,
-                message: 'You already have an active subscription.',
-                data: existingSubscription,
-            });
-        }
-
-        // Calculate end date based on duration
         const startDate = new Date();
         const endDate = new Date();
         if (plan.duration === 'Monthly') {
@@ -210,18 +193,44 @@ const subscribe = async (req, res) => {
             endDate.setFullYear(endDate.getFullYear() + 1);
         }
 
-        const subscription = await prisma.userSubscription.create({
-            data: {
-                userId,
-                planId,
-                startDate,
-                endDate,
-                status: 'PENDING', // Subscriptions start as PENDING until payment completes
-            },
-            include: {
-                plan: true,
-            },
+        const subscription = await prisma.$transaction(async (tx) => {
+            const existingSubscription = await tx.userSubscription.findFirst({
+                where: {
+                    userId,
+                    status: { in: ['ACTIVE', 'PENDING'] },
+                    endDate: { gt: new Date() },
+                },
+            });
+
+            if (existingSubscription) {
+                return { conflict: true, existingSubscription };
+            }
+
+            return tx.userSubscription.create({
+                data: {
+                    userId,
+                    planId,
+                    startDate,
+                    endDate,
+                    status: 'PENDING',
+                },
+                include: {
+                    plan: true,
+                },
+            });
+        }, {
+            isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+            maxWait: 5000,
+            timeout: 10000,
         });
+
+        if (subscription && subscription.conflict === true) {
+            return res.status(400).json({
+                success: false,
+                message: 'You already have an active subscription.',
+                data: subscription.existingSubscription,
+            });
+        }
 
         res.status(201).json({
             success: true,
@@ -229,10 +238,58 @@ const subscribe = async (req, res) => {
             data: subscription,
         });
     } catch (error) {
+        if (error.code === 'P2034') {
+            return res.status(409).json({
+                success: false,
+                message: 'Subscription request conflicted. Please try again.',
+            });
+        }
         console.error('Subscribe error:', error);
         res.status(500).json({
             success: false,
             message: 'Failed to subscribe.',
+        });
+    }
+};
+
+// Validate subscription coupon (server-side; configure via SUBSCRIPTION_COUPONS env JSON)
+const validateCoupon = async (req, res) => {
+    try {
+        const code = (req.body?.code || '').trim().toLowerCase();
+        if (!code) {
+            return res.status(400).json({
+                success: false,
+                valid: false,
+                message: 'Coupon code is required.',
+            });
+        }
+
+        let coupons = { discount10: 10 };
+        if (process.env.SUBSCRIPTION_COUPONS) {
+            try {
+                const parsed = JSON.parse(process.env.SUBSCRIPTION_COUPONS);
+                if (parsed && typeof parsed === 'object') {
+                    coupons = parsed;
+                }
+            } catch {
+                // keep default
+            }
+        }
+
+        const discountPercent = coupons[code];
+        const valid = typeof discountPercent === 'number' && discountPercent > 0 && discountPercent <= 100;
+
+        return res.json({
+            success: true,
+            valid,
+            ...(valid ? { discountPercent } : {}),
+        });
+    } catch (error) {
+        console.error('Validate coupon error:', error);
+        res.status(500).json({
+            success: false,
+            valid: false,
+            message: 'Coupon validation failed.',
         });
     }
 };
@@ -311,6 +368,7 @@ module.exports = {
     updatePlan,
     deletePlan,
     subscribe,
+    validateCoupon,
     getMySubscription,
     cancelSubscription,
 };

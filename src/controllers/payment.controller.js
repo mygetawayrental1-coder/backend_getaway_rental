@@ -1,4 +1,3 @@
-const crypto = require('crypto');
 const prisma = require('../config/database');
 const paypalClient = require('../config/paypal');
 const { OrdersController } = require('@paypal/paypal-server-sdk');
@@ -22,6 +21,18 @@ const createOrder = async (req, res) => {
                 success: false,
                 message: 'Valid amount is required.',
             });
+        }
+
+        if (subscriptionId) {
+            const owned = await prisma.userSubscription.findFirst({
+                where: { id: subscriptionId, userId },
+            });
+            if (!owned) {
+                return res.status(403).json({
+                    success: false,
+                    message: 'Invalid subscription reference.',
+                });
+            }
         }
 
         const ordersController = new OrdersController(paypalClient);
@@ -74,7 +85,7 @@ const createOrder = async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Failed to create payment order.',
-            error: error.message,
+            ...(process.env.NODE_ENV === 'development' && { error: error.message }),
         });
     }
 };
@@ -95,6 +106,38 @@ const verifyPayment = async (req, res) => {
             return res.status(400).json({
                 success: false,
                 message: 'PayPal order ID is required.',
+            });
+        }
+
+        const pending = await prisma.payment.findUnique({
+            where: { paypalOrderId: orderId },
+        });
+
+        if (!pending) {
+            return res.status(404).json({
+                success: false,
+                message: 'Payment record not found for this order.',
+            });
+        }
+
+        if (req.user.role !== 'ADMIN' && pending.userId !== req.user.id) {
+            return res.status(403).json({
+                success: false,
+                message: 'Access denied.',
+            });
+        }
+
+        if (pending.status === 'paid') {
+            const paid = await prisma.payment.findUnique({
+                where: { paypalOrderId: orderId },
+                include: {
+                    subscription: true,
+                },
+            });
+            return res.json({
+                success: true,
+                message: 'Payment was already verified.',
+                data: paid,
             });
         }
 
@@ -146,7 +189,7 @@ const verifyPayment = async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Payment verification failed.',
-            error: error.message,
+            ...(process.env.NODE_ENV === 'development' && { error: error.message }),
         });
     }
 };
