@@ -18,6 +18,8 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@clerk/backend": "^3.4.7",
+    "@clerk/express": "^2.1.15",
     "@paypal/paypal-server-sdk": "^2.1.0",
     "@prisma/client": "^5.22.0",
     "bcryptjs": "^3.0.3",
@@ -37,6 +39,7 @@
     "prisma": "^5.22.0",
     "resend": "^6.9.3",
     "sib-api-v3-sdk": "^8.5.0",
+    "svix": "^1.93.0",
     "uuid": "^13.0.0"
   },
   "devDependencies": {

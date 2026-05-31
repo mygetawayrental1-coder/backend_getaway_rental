@@ -37,6 +37,11 @@ const createProperty = async (req, res) => {
             emailId,
             captchaId,
             captchaCode,
+            rentalType,
+            slug: slugBody,
+            areaM2,
+            discountPercent,
+            videoUrl,
         } = req.body;
 
         // Verify Captcha before proceeding
@@ -71,6 +76,16 @@ const createProperty = async (req, res) => {
             if (owner) ownerId = owner.id;
         }
 
+        const baseSlug = String(propertyName || 'rental')
+            .toLowerCase()
+            .replace(/[^a-z0-9\s-]/g, '')
+            .replace(/\s+/g, '-')
+            .slice(0, 50);
+        const slug =
+            slugBody && String(slugBody).trim()
+                ? String(slugBody).trim()
+                : `${baseSlug || 'stay'}-${Date.now().toString(36)}`;
+
         const property = await prisma.property.create({
             data: {
                 propertyName,
@@ -97,6 +112,11 @@ const createProperty = async (req, res) => {
                 images: stringifyJsonField(images),
                 icalUrls: stringifyJsonField(icalUrls),
                 ownerId,
+                slug,
+                rentalType: rentalType || null,
+                areaM2: areaM2 != null ? parseInt(areaM2, 10) || null : null,
+                discountPercent: discountPercent != null ? parseInt(discountPercent, 10) || null : null,
+                videoUrl: videoUrl || null,
             },
             include: {
                 owner: {
@@ -309,9 +329,10 @@ const updateProperty = async (req, res) => {
         const data = {};
         const fields = [
             'propertyName', 'location', 'state', 'country', 'latitude', 'longitude',
-            'about', 'policyAndHouseRules', 'status'
+            'about', 'policyAndHouseRules', 'status', 'slug', 'rentalType', 'videoUrl', 'policyDetails',
         ];
-        const intFields = ['guests', 'bedrooms', 'bathrooms', 'kitchens', 'minRate', 'nightlyRate', 'weekendRate', 'weeklyRate', 'monthlyRate'];
+        const intFields = ['guests', 'bedrooms', 'bathrooms', 'kitchens', 'minRate', 'nightlyRate', 'weekendRate', 'weeklyRate', 'monthlyRate', 'areaM2', 'discountPercent'];
+        const boolFields = ['isFeatured', 'isNew'];
         const jsonFields = ['additionalCharges', 'amenities', 'icalUrls'];
         const dateFields = ['ratePeriodStart', 'ratePeriodEnd'];
 
@@ -320,6 +341,9 @@ const updateProperty = async (req, res) => {
         });
         intFields.forEach(field => {
             if (updateData[field] !== undefined) data[field] = parseInt(updateData[field]) || 0;
+        });
+        boolFields.forEach((field) => {
+            if (updateData[field] !== undefined) data[field] = Boolean(updateData[field]);
         });
         jsonFields.forEach(field => {
             if (updateData[field] !== undefined) data[field] = stringifyJsonField(updateData[field]);

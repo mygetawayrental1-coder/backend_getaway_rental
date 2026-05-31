@@ -1,6 +1,6 @@
 const { Prisma } = require('@prisma/client');
 const prisma = require('../config/database');
-const { verifyToken } = require('../services/token.service');
+const { getUserFromBearerToken } = require('../services/authResolve.service');
 
 /**
  * Check property availability for given dates
@@ -310,12 +310,13 @@ const getBookingById = async (req, res) => {
         let authedUser = null;
         const authHeader = req.headers.authorization;
         if (authHeader && authHeader.startsWith('Bearer ')) {
-            const decoded = verifyToken(authHeader.split(' ')[1]);
-            if (decoded?.userId) {
-                authedUser = await prisma.user.findUnique({
-                    where: { id: decoded.userId },
-                    select: { id: true, email: true, role: true },
-                });
+            authedUser = await getUserFromBearerToken(authHeader.split(' ')[1]);
+            if (authedUser) {
+                authedUser = {
+                    id: authedUser.id,
+                    email: authedUser.email,
+                    role: authedUser.role,
+                };
             }
         }
 

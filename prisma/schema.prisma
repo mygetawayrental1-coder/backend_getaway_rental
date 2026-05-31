@@ -12,6 +12,7 @@ datasource db {
 
 model User {
   id               String    @id @default(cuid())
+  clerkId          String?   @unique
   email            String    @unique
   password         String
   firstName        String
@@ -34,6 +35,7 @@ model User {
   subscriptions UserSubscription[]
   payments      Payment[]
   ownerRequests OwnerRequest[]
+  wishlists     Wishlist[]
 }
 
 model OwnerRequest {
@@ -78,6 +80,14 @@ model Property {
   images              String? // JSON string array
   icalUrls            String? // JSON object
   status              String    @default("Active") // Active, Inactive, Pending
+  slug                String?   @unique
+  rentalType          String?
+  areaM2              Int?
+  isFeatured          Boolean   @default(false)
+  isNew               Boolean   @default(true)
+  discountPercent     Int?
+  policyDetails       String?   @db.Text
+  videoUrl            String?
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
 
@@ -87,6 +97,82 @@ model Property {
   guestRequests GuestRequest[]
   bookings      Booking[]
   icalEvents    IcalEvent[]
+  reviews       Review[]
+  wishlists     Wishlist[]
+}
+
+model Review {
+  id              String   @id @default(cuid())
+  propertyId      String
+  property        Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  authorName      String
+  authorEmail     String
+  sleepRating     Int
+  locationRating  Int
+  serviceRating   Int
+  clearnessRating Int
+  roomsRating     Int
+  overallRating   Float
+  text            String   @db.Text
+  isApproved      Boolean  @default(false)
+  createdAt       DateTime @default(now())
+
+  @@index([propertyId])
+}
+
+model BlogPost {
+  id           String   @id @default(cuid())
+  slug         String   @unique
+  title        String
+  excerpt      String
+  content      String   @db.Text
+  category     String
+  thumbnailUrl String
+  authorName   String
+  isPublished  Boolean  @default(false)
+  publishedAt  DateTime @default(now())
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model Location {
+  id         Int      @id @default(autoincrement())
+  name       String
+  slug       String   @unique
+  parentSlug String?
+  image      String
+  lat        Float?
+  lng        Float?
+  sortOrder  Int      @default(0)
+  createdAt  DateTime @default(now())
+}
+
+model Wishlist {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  propertyId String
+  property   Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+
+  @@unique([userId, propertyId])
+}
+
+model NewsletterSubscriber {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  createdAt DateTime @default(now())
+}
+
+model WebContactMessage {
+  id        String   @id @default(cuid())
+  name      String
+  email     String
+  phone     String?
+  subject   String
+  message   String   @db.Text
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
 }
 
 model Inquiry {

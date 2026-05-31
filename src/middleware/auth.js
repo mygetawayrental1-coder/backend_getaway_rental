@@ -1,7 +1,14 @@
-const { verifyToken } = require('../services/token.service');
-const prisma = require('../config/database');
+const {
+    getUserFromBearerToken,
+    getUserFromBearerTokenOptional,
+} = require('../services/authResolve.service');
 
-// Authenticate user from JWT token
+const attachUser = (req, user) => {
+    req.user = user;
+    req.currentUser = user;
+};
+
+// Required auth — legacy JWT or Clerk Bearer token
 const authenticate = async (req, res, next) => {
     try {
         const authHeader = req.headers.authorization;
@@ -14,36 +21,16 @@ const authenticate = async (req, res, next) => {
         }
 
         const token = authHeader.split(' ')[1];
-        const decoded = verifyToken(token);
+        const user = await getUserFromBearerToken(token);
 
-        if (!decoded) {
+        if (!user) {
             return res.status(401).json({
                 success: false,
                 message: 'Invalid or expired token.',
             });
         }
 
-        // Get user from database
-        const user = await prisma.user.findUnique({
-            where: { id: decoded.userId },
-            select: {
-                id: true,
-                email: true,
-                firstName: true,
-                lastName: true,
-                role: true,
-                emailVerified: true,
-            },
-        });
-
-        if (!user) {
-            return res.status(401).json({
-                success: false,
-                message: 'User not found.',
-            });
-        }
-
-        req.user = user;
+        attachUser(req, user);
         next();
     } catch (error) {
         console.error('Auth middleware error:', error);
@@ -54,7 +41,7 @@ const authenticate = async (req, res, next) => {
     }
 };
 
-// Optional authentication - doesn't fail if no token
+// Optional authentication — attaches user when token is valid
 const optionalAuth = async (req, res, next) => {
     try {
         const authHeader = req.headers.authorization;
@@ -64,21 +51,8 @@ const optionalAuth = async (req, res, next) => {
         }
 
         const token = authHeader.split(' ')[1];
-        const decoded = verifyToken(token);
-
-        if (decoded) {
-            const user = await prisma.user.findUnique({
-                where: { id: decoded.userId },
-                select: {
-                    id: true,
-                    email: true,
-                    firstName: true,
-                    lastName: true,
-                    role: true,
-                },
-            });
-            req.user = user;
-        }
+        const user = await getUserFromBearerTokenOptional(token);
+        if (user) attachUser(req, user);
 
         next();
     } catch (error) {
@@ -86,7 +60,13 @@ const optionalAuth = async (req, res, next) => {
     }
 };
 
+// Aliases for Clerk-style naming (use existing ../middleware/roles with authenticate)
+const requireAuth = authenticate;
+const withAuth = optionalAuth;
+
 module.exports = {
     authenticate,
     optionalAuth,
+    requireAuth,
+    withAuth,
 };

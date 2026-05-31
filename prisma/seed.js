@@ -491,6 +491,126 @@ async function main() {
         console.log('✅ Created subscription for owner');
     }
 
+    // ============================================
+    // 6. WEB APP SEED (locations, blog, property slugs & featured)
+    // ============================================
+
+    const locationSeeds = [
+        { name: 'United States', slug: 'united-states', parentSlug: null, image: 'https://images.unsplash.com/photo-1485738422979-f5c462d49f74?w=800', sortOrder: 1 },
+        { name: 'California', slug: 'california', parentSlug: 'united-states', image: 'https://images.unsplash.com/photo-1449034446853-66c86144b0ad?w=800', sortOrder: 2 },
+        { name: 'Los Angeles', slug: 'los-angeles', parentSlug: 'california', image: 'https://images.unsplash.com/photo-1580655653885-65763b2597d0?w=800', sortOrder: 3 },
+        { name: 'New York City', slug: 'new-york-city-hotels', parentSlug: 'united-states', image: 'https://images.unsplash.com/photo-1499092346589-b9b6be3e94b2?w=800', sortOrder: 4 },
+        { name: 'San Francisco', slug: 'sanfrancisco', parentSlug: 'california', image: 'https://images.unsplash.com/photo-1506146332389-18140dc7b2fb?w=800', sortOrder: 5 },
+        { name: 'Nevada', slug: 'nevada-state', parentSlug: 'united-states', image: 'https://images.unsplash.com/photo-1605833556294-ea5c7a74f57d?w=800', sortOrder: 6 },
+        { name: 'New Jersey', slug: 'new-jersey', parentSlug: 'united-states', image: 'https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=800', sortOrder: 7 },
+        { name: 'Virginia', slug: 'virginia-state', parentSlug: 'united-states', image: 'https://images.unsplash.com/photo-1599030290346-2d56f2b5b534?w=800', sortOrder: 8 },
+        { name: 'Philadelphia', slug: 'philadelphia', parentSlug: 'united-states', image: 'https://images.unsplash.com/photo-1569761316261-9a8696fa2ca3?w=800', sortOrder: 9 },
+    ];
+
+    for (const loc of locationSeeds) {
+        await prisma.location.upsert({
+            where: { slug: loc.slug },
+            update: loc,
+            create: loc,
+        });
+        console.log('✅ Location:', loc.slug);
+    }
+
+    const blogSeeds = [
+        {
+            slug: 'discover-hidden-beaches-us',
+            title: 'Discover Hidden Beaches Across the US',
+            excerpt: 'Uncover serene coastal escapes beyond the tourist crowds.',
+            content: '<p>From the rugged Oregon coast to Florida\'s Gulf Keys, America offers unforgettable shoreline escapes. Pack light, respect local wildlife, and travel during shoulder seasons for quieter sands.</p>',
+            category: 'Beauty beaches',
+            thumbnailUrl: 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=800',
+            authorName: 'Travel Desk',
+            isPublished: true,
+        },
+        {
+            slug: 'national-parks-weekend-itineraries',
+            title: 'National Parks: Weekend Itineraries',
+            excerpt: 'Short trips that maximize trails, vistas, and wildlife.',
+            content: '<p>Whether you choose Yosemite, Zion, or the Smokies, plan sunrise hikes and book lodging early. Carry plenty of water and check seasonal road closures.</p>',
+            category: 'National parks',
+            thumbnailUrl: 'https://images.unsplash.com/photo-1469474968028-56623f02e42e?w=800',
+            authorName: 'Trail Notes',
+            isPublished: true,
+        },
+        {
+            slug: 'cultural-events-calendar',
+            title: 'Cultural Events Worth Planning Around',
+            excerpt: 'Festivals and museums that define each destination.',
+            content: '<p>Align your rental dates with local art walks, music festivals, and food weeks. Many cities publish annual calendars—bookmark them when choosing dates.</p>',
+            category: 'Cultural events',
+            thumbnailUrl: 'https://images.unsplash.com/photo-1533174072545-7a4b6ad7a6c3?w=800',
+            authorName: 'City Guides',
+            isPublished: true,
+        },
+        {
+            slug: 'mountain-cabin-checklist',
+            title: 'Mountain Cabin Getaways: What to Pack',
+            excerpt: 'Layers, traction, and booking tips for alpine stays.',
+            content: '<p>Elevation changes temperatures fast—bring layers and traction devices in winter. Confirm driveway access and snow removal with your host.</p>',
+            category: 'Mountains',
+            thumbnailUrl: 'https://images.unsplash.com/photo-1518780664699-ffc087ae005e?w=800',
+            authorName: 'Alpine Tips',
+            isPublished: true,
+        },
+        {
+            slug: 'museum-hopping-east-coast',
+            title: 'Museum Hopping on the East Coast',
+            excerpt: 'Balancing tickets, timed entry, and neighborhood dining.',
+            content: '<p>Reserve timed tickets where required and cluster museums walkable from your rental to save transit time.</p>',
+            category: 'Museums',
+            thumbnailUrl: 'https://images.unsplash.com/photo-1549887534-1541e9326642?w=800',
+            authorName: 'Culture Weekly',
+            isPublished: true,
+        },
+        {
+            slug: 'theme-parks-family-stays',
+            title: 'Theme Parks & Family-Friendly Stays',
+            excerpt: 'Choosing rentals with pools and kitchens near major parks.',
+            content: '<p>Look for homes with laundry and kitchens to manage long park days. Build buffer days for rest between ticketed parks.</p>',
+            category: 'Parks and Carnivals',
+            thumbnailUrl: 'https://images.unsplash.com/photo-1526778548025-fa2f459cd5c1?w=800',
+            authorName: 'Family Travel',
+            isPublished: true,
+        },
+    ];
+
+    for (const post of blogSeeds) {
+        await prisma.blogPost.upsert({
+            where: { slug: post.slug },
+            update: post,
+            create: post,
+        });
+        console.log('✅ Blog:', post.slug);
+    }
+
+    const propertiesWithoutSlug = await prisma.property.findMany({ where: { slug: null } });
+    for (const p of propertiesWithoutSlug) {
+        const base = p.propertyName
+            .toLowerCase()
+            .replace(/[^a-z0-9\s-]/g, '')
+            .replace(/\s+/g, '-')
+            .slice(0, 60);
+        const slug = `${base}-${p.id.slice(0, 6)}`;
+        await prisma.property.update({
+            where: { id: p.id },
+            data: { slug },
+        });
+        console.log('✅ Slug for property:', slug);
+    }
+
+    await prisma.property.updateMany({
+        where: { propertyId: { in: ['prop-001', 'prop-002', 'prop-003'] } },
+        data: {
+            isFeatured: true,
+            rentalType: 'House',
+        },
+    });
+
     console.log('\n🎉 Comprehensive database seeding completed!');
     console.log('\n📋 Test Credentials:');
     console.log('   Admin: admin@mygatewayrentals.com / Admin@123');

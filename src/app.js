@@ -18,6 +18,15 @@ const guestRequestRoutes = require('./routes/guestRequest.routes');
 const bookingRoutes = require('./routes/booking.routes');
 const ownerRequestRoutes = require('./routes/ownerRequest.routes');
 const icalRoutes = require('./routes/ical.routes');
+const webhookRoutes = require('./routes/webhook.routes');
+const webPropertiesRoutes = require('./routes/web/properties.routes');
+const webBlogRoutes = require('./routes/web/blog.routes');
+const webLocationsRoutes = require('./routes/web/locations.routes');
+const webWishlistRoutes = require('./routes/web/wishlist.routes');
+const webNewsletterRoutes = require('./routes/web/newsletter.routes');
+const webContactRoutes = require('./routes/web/contact.routes');
+const webPricingRoutes = require('./routes/web/pricing.routes');
+const webHostsRoutes = require('./routes/web/hosts.routes');
 const { startIcalScheduler } = require('./utils/ical.scheduler');
 
 const app = express();
@@ -34,6 +43,10 @@ app.use(cors({
     origin: '*',
     credentials: true,
 }));
+
+// Clerk webhooks require raw body for signature verification (must be before express.json)
+app.use('/webhooks', webhookRoutes);
+
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
@@ -59,6 +72,8 @@ app.get('/', (req, res) => {
             dashboard: '/dashboard',
             bookings: '/bookings',
             ical: '/ical',
+            web: '/api/web',
+            webhooks: '/webhooks',
         },
     });
 });
@@ -79,6 +94,16 @@ app.use('/guest-requests', guestRequestRoutes);
 app.use('/bookings', bookingRoutes);
 app.use('/owner-requests', ownerRequestRoutes);
 app.use('/ical', icalRoutes);
+
+// Web app (Next.js) — additive routes only
+app.use('/api/web/properties', webPropertiesRoutes);
+app.use('/api/web/blog', webBlogRoutes);
+app.use('/api/web/locations', webLocationsRoutes);
+app.use('/api/web/wishlist', webWishlistRoutes);
+app.use('/api/web/newsletter', webNewsletterRoutes);
+app.use('/api/web/contact', webContactRoutes);
+app.use('/api/web/pricing', webPricingRoutes);
+app.use('/api/web/hosts', webHostsRoutes);
 
 // 404 Handler
 app.use((req, res) => {
