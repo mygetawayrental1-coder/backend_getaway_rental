@@ -1,15 +1,5 @@
 const { Webhook } = require('svix');
-const prisma = require('../config/database');
-
-function primaryEmail(data) {
-    if (!data?.email_addresses?.length) return null;
-    const primaryId = data.primary_email_address_id;
-    if (primaryId) {
-        const match = data.email_addresses.find((e) => e.id === primaryId);
-        if (match?.email_address) return match.email_address;
-    }
-    return data.email_addresses[0].email_address;
-}
+const { syncUser, deactivateUserByClerkId } = require('./auth.controller');
 
 async function handleClerk(req, res) {
     const webhookSecret = process.env.CLERK_WEBHOOK_SECRET;
@@ -36,53 +26,12 @@ async function handleClerk(req, res) {
     const { type, data } = event;
 
     try {
-        if (type === 'user.created') {
-            const email = primaryEmail(data);
-            if (!email) {
-                console.warn('[webhook] user.created without email', data?.id);
-                return res.json({ received: true });
-            }
-
-            await prisma.user.upsert({
-                where: { email },
-                update: {
-                    clerkId: data.id,
-                    firstName: data.first_name || '',
-                    lastName: data.last_name || '',
-                    profilePic: data.image_url || undefined,
-                    emailVerified: true,
-                },
-                create: {
-                    clerkId: data.id,
-                    email,
-                    firstName: data.first_name || '',
-                    lastName: data.last_name || '',
-                    profilePic: data.image_url || null,
-                    password: '',
-                    role: 'END_USER',
-                    emailVerified: true,
-                },
-            });
-        }
-
-        if (type === 'user.updated') {
-            const email = primaryEmail(data);
-            await prisma.user.updateMany({
-                where: { clerkId: data.id },
-                data: {
-                    firstName: data.first_name || '',
-                    lastName: data.last_name || '',
-                    profilePic: data.image_url || undefined,
-                    ...(email ? { email } : {}),
-                },
-            });
+        if (type === 'user.created' || type === 'user.updated') {
+            await syncUser(data);
         }
 
         if (type === 'user.deleted') {
-            await prisma.user.updateMany({
-                where: { clerkId: data.id },
-                data: { clerkId: null },
-            });
+            await deactivateUserByClerkId(data.id);
         }
     } catch (err) {
         console.error('[webhook] handler error', err);

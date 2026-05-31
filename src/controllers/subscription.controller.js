@@ -1,6 +1,7 @@
 const { Prisma } = require('@prisma/client');
 const prisma = require('../config/database');
 const { stringifyJsonField, parseJsonField, getPagination, formatPaginatedResponse } = require('../utils/helpers');
+const { validateCouponForPlan, applyCoupon } = require('./coupon.controller');
 
 // Get all subscription plans
 const getAllPlans = async (req, res) => {
@@ -174,7 +175,7 @@ const deletePlan = async (req, res) => {
 // Subscribe to a plan
 const subscribe = async (req, res) => {
     try {
-        const { planId } = req.body;
+        const { planId, couponId, code, couponCode } = req.body;
         const userId = req.user.id;
 
         const plan = await prisma.subscriptionPlan.findUnique({ where: { id: planId } });
@@ -183,6 +184,24 @@ const subscribe = async (req, res) => {
                 success: false,
                 message: 'Plan not found.',
             });
+        }
+
+        let resolvedCouponId = couponId || null;
+        const couponInput = code || couponCode;
+
+        if (resolvedCouponId || couponInput) {
+            const validation = await validateCouponForPlan({
+                couponId: resolvedCouponId || undefined,
+                code: couponInput || undefined,
+                planId,
+            });
+            if (!validation.valid) {
+                return res.status(400).json({
+                    success: false,
+                    message: validation.message || 'Invalid coupon.',
+                });
+            }
+            resolvedCouponId = validation.coupon.id;
         }
 
         const startDate = new Date();
@@ -206,16 +225,22 @@ const subscribe = async (req, res) => {
                 return { conflict: true, existingSubscription };
             }
 
+            if (resolvedCouponId) {
+                await applyCoupon(resolvedCouponId, tx);
+            }
+
             return tx.userSubscription.create({
                 data: {
                     userId,
                     planId,
+                    couponId: resolvedCouponId,
                     startDate,
                     endDate,
                     status: 'PENDING',
                 },
                 include: {
                     plan: true,
+                    coupon: true,
                 },
             });
         }, {
@@ -244,52 +269,16 @@ const subscribe = async (req, res) => {
                 message: 'Subscription request conflicted. Please try again.',
             });
         }
+        if (error.message && /coupon/i.test(error.message)) {
+            return res.status(400).json({
+                success: false,
+                message: error.message,
+            });
+        }
         console.error('Subscribe error:', error);
         res.status(500).json({
             success: false,
             message: 'Failed to subscribe.',
-        });
-    }
-};
-
-// Validate subscription coupon (server-side; configure via SUBSCRIPTION_COUPONS env JSON)
-const validateCoupon = async (req, res) => {
-    try {
-        const code = (req.body?.code || '').trim().toLowerCase();
-        if (!code) {
-            return res.status(400).json({
-                success: false,
-                valid: false,
-                message: 'Coupon code is required.',
-            });
-        }
-
-        let coupons = { discount10: 10 };
-        if (process.env.SUBSCRIPTION_COUPONS) {
-            try {
-                const parsed = JSON.parse(process.env.SUBSCRIPTION_COUPONS);
-                if (parsed && typeof parsed === 'object') {
-                    coupons = parsed;
-                }
-            } catch {
-                // keep default
-            }
-        }
-
-        const discountPercent = coupons[code];
-        const valid = typeof discountPercent === 'number' && discountPercent > 0 && discountPercent <= 100;
-
-        return res.json({
-            success: true,
-            valid,
-            ...(valid ? { discountPercent } : {}),
-        });
-    } catch (error) {
-        console.error('Validate coupon error:', error);
-        res.status(500).json({
-            success: false,
-            valid: false,
-            message: 'Coupon validation failed.',
         });
     }
 };
@@ -368,7 +357,6 @@ module.exports = {
     updatePlan,
     deletePlan,
     subscribe,
-    validateCoupon,
     getMySubscription,
     cancelSubscription,
 };

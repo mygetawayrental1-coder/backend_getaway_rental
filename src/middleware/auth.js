@@ -8,7 +8,7 @@ const attachUser = (req, user) => {
     req.currentUser = user;
 };
 
-// Required auth — legacy JWT or Clerk Bearer token
+/** Required auth — verifies Clerk JWT and loads the Prisma user by clerkId. */
 const authenticate = async (req, res, next) => {
     try {
         const authHeader = req.headers.authorization;
@@ -41,7 +41,7 @@ const authenticate = async (req, res, next) => {
     }
 };
 
-// Optional authentication — attaches user when token is valid
+/** Optional auth — attaches user when a valid Clerk token is present. */
 const optionalAuth = async (req, res, next) => {
     try {
         const authHeader = req.headers.authorization;
@@ -60,7 +60,6 @@ const optionalAuth = async (req, res, next) => {
     }
 };
 
-// Aliases for Clerk-style naming (use existing ../middleware/roles with authenticate)
 const requireAuth = authenticate;
 const withAuth = optionalAuth;
 

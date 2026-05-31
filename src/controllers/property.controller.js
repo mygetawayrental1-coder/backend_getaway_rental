@@ -8,6 +8,219 @@ const {
     formatPaginatedResponse,
 } = require('../utils/helpers');
 
+const BLOCKING_BOOKING_STATUSES = ['CONFIRMED', 'ONGOING'];
+
+function startOfDay(value) {
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return null;
+    d.setHours(0, 0, 0, 0);
+    return d;
+}
+
+function formatDateOnly(value) {
+    const d = startOfDay(value);
+    if (!d) return null;
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+}
+
+async function resolvePropertyByParam(id) {
+    return prisma.property.findFirst({
+        where: { OR: [{ id }, { propertyId: id }] },
+    });
+}
+
+async function assertPropertyOwner(req, res, property) {
+    if (!property) {
+        res.status(404).json({ success: false, message: 'Property not found.' });
+        return false;
+    }
+    if (req.user.role !== 'ADMIN' && property.ownerId !== req.user.id) {
+        res.status(403).json({ success: false, message: 'Access denied.' });
+        return false;
+    }
+    return true;
+}
+
+/**
+ * GET /properties/:id/availability
+ */
+const getAvailability = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { startDate, endDate } = req.query;
+
+        if (!startDate || !endDate) {
+            return res.status(400).json({
+                success: false,
+                message: 'startDate and endDate query parameters are required.',
+            });
+        }
+
+        const rangeStart = startOfDay(startDate);
+        const rangeEnd = startOfDay(endDate);
+        if (!rangeStart || !rangeEnd) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid startDate or endDate.',
+            });
+        }
+        if (rangeStart > rangeEnd) {
+            return res.status(400).json({
+                success: false,
+                message: 'endDate must be on or after startDate.',
+            });
+        }
+
+        const property = await resolvePropertyByParam(id);
+        if (!property) {
+            return res.status(404).json({ success: false, message: 'Property not found.' });
+        }
+
+        const [ownerBlocks, bookingBlocks] = await Promise.all([
+            prisma.propertyAvailability.findMany({
+                where: {
+                    propertyId: property.id,
+                    isAvailable: false,
+                    date: { gte: rangeStart, lte: rangeEnd },
+                },
+                orderBy: { date: 'asc' },
+            }),
+            prisma.booking.findMany({
+                where: {
+                    propertyId: property.id,
+                    status: { in: BLOCKING_BOOKING_STATUSES },
+                    checkin: { lte: rangeEnd },
+                    checkout: { gt: rangeStart },
+                },
+                select: {
+                    checkin: true,
+                    checkout: true,
+                },
+                orderBy: { checkin: 'asc' },
+            }),
+        ]);
+
+        res.json({
+            success: true,
+            blockedByOwner: ownerBlocks.map((row) => formatDateOnly(row.date)),
+            blockedByBookings: bookingBlocks.map((b) => ({
+                checkin: b.checkin,
+                checkout: b.checkout,
+            })),
+        });
+    } catch (error) {
+        console.error('Get availability error:', error);
+        res.status(500).json({ success: false, message: 'Failed to fetch availability.' });
+    }
+};
+
+/**
+ * POST /properties/:id/availability
+ */
+const setAvailability = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { dates, isAvailable, note } = req.body;
+
+        if (!Array.isArray(dates) || dates.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'dates must be a non-empty array of ISO date strings.',
+            });
+        }
+        if (typeof isAvailable !== 'boolean') {
+            return res.status(400).json({
+                success: false,
+                message: 'isAvailable must be a boolean.',
+            });
+        }
+
+        const property = await resolvePropertyByParam(id);
+        if (!(await assertPropertyOwner(req, res, property))) return;
+
+        const parsedDates = dates.map(startOfDay);
+        if (parsedDates.some((d) => !d)) {
+            return res.status(400).json({
+                success: false,
+                message: 'One or more dates are invalid.',
+            });
+        }
+
+        const uniqueDates = [...new Map(parsedDates.map((d) => [d.getTime(), d])).values()];
+
+        await prisma.$transaction(
+            uniqueDates.map((date) =>
+                prisma.propertyAvailability.upsert({
+                    where: {
+                        propertyId_date: {
+                            propertyId: property.id,
+                            date,
+                        },
+                    },
+                    create: {
+                        propertyId: property.id,
+                        date,
+                        isAvailable,
+                        note: note || null,
+                    },
+                    update: {
+                        isAvailable,
+                        ...(note !== undefined ? { note: note || null } : {}),
+                    },
+                }),
+            ),
+        );
+
+        res.json({ success: true, updated: uniqueDates.length });
+    } catch (error) {
+        console.error('Set availability error:', error);
+        res.status(500).json({ success: false, message: 'Failed to update availability.' });
+    }
+};
+
+/**
+ * DELETE /properties/:id/availability
+ */
+const clearAvailability = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { dates } = req.body;
+
+        if (!Array.isArray(dates) || dates.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'dates must be a non-empty array of ISO date strings.',
+            });
+        }
+
+        const property = await resolvePropertyByParam(id);
+        if (!(await assertPropertyOwner(req, res, property))) return;
+
+        const parsedDates = dates.map(startOfDay).filter(Boolean);
+        if (parsedDates.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'One or more dates are invalid.',
+            });
+        }
+
+        const result = await prisma.propertyAvailability.deleteMany({
+            where: {
+                propertyId: property.id,
+                date: { in: parsedDates },
+            },
+        });
+
+        res.json({ success: true, deleted: result.count });
+    } catch (error) {
+        console.error('Clear availability error:', error);
+        res.status(500).json({ success: false, message: 'Failed to clear availability.' });
+    }
+};
+
 // Create property
 const createProperty = async (req, res) => {
     try {
@@ -515,4 +728,7 @@ module.exports = {
     deleteProperty,
     getPropertiesByLocation,
     getLocationSuggestions,
+    getAvailability,
+    setAvailability,
+    clearAvailability,
 };

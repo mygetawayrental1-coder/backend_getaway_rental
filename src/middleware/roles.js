@@ -28,9 +28,11 @@ const requireRole = (...allowedRoles) => {
 
 // Admin only middleware
 const isAdmin = requireRole(ROLES.ADMIN);
+const requireAdmin = isAdmin;
 
 // Owner only middleware
 const isOwner = requireRole(ROLES.OWNER);
+const requireOwner = isOwner;
 
 // Admin or Owner middleware
 const isAdminOrOwner = requireRole(ROLES.ADMIN, ROLES.OWNER);
@@ -72,7 +74,9 @@ module.exports = {
     ROLES,
     requireRole,
     isAdmin,
+    requireAdmin,
     isOwner,
+    requireOwner,
     isAdminOrOwner,
     isAuthenticated,
     isResourceOwnerOrAdmin,

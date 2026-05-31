@@ -259,6 +259,22 @@ exports.getBySlug = async (req, res) => {
                 reviews: {
                     where: { isApproved: true },
                     orderBy: { createdAt: 'desc' },
+                    select: {
+                        id: true,
+                        authorName: true,
+                        authorEmail: true,
+                        sleepRating: true,
+                        locationRating: true,
+                        serviceRating: true,
+                        clearnessRating: true,
+                        roomsRating: true,
+                        overallRating: true,
+                        text: true,
+                        ownerReply: true,
+                        ownerRepliedAt: true,
+                        createdAt: true,
+                        updatedAt: true,
+                    },
                 },
             },
         });
@@ -295,12 +311,37 @@ exports.getReviews = async (req, res) => {
         const { id } = req.params;
         const approvedOnly = req.query.approvedOnly !== 'false';
 
-        const where = { propertyId: id };
+        const property = await prisma.property.findFirst({
+            where: { OR: [{ id }, { propertyId: id }] },
+            select: { id: true },
+        });
+        if (!property) {
+            return res.status(404).json({ success: false, message: 'Property not found.' });
+        }
+
+        const where = { propertyId: property.id };
         if (approvedOnly) where.isApproved = true;
 
         const reviews = await prisma.review.findMany({
             where,
             orderBy: { createdAt: 'desc' },
+            select: {
+                id: true,
+                authorName: true,
+                authorEmail: true,
+                sleepRating: true,
+                locationRating: true,
+                serviceRating: true,
+                clearnessRating: true,
+                roomsRating: true,
+                overallRating: true,
+                text: true,
+                ownerReply: true,
+                ownerRepliedAt: true,
+                isApproved: true,
+                createdAt: true,
+                updatedAt: true,
+            },
         });
 
         res.json({ success: true, reviews });
@@ -344,6 +385,7 @@ exports.createReview = async (req, res) => {
         const review = await prisma.review.create({
             data: {
                 propertyId: property.id,
+                authorId: req.user?.id ?? null,
                 authorName: String(authorName || '').trim() || 'Guest',
                 authorEmail: String(authorEmail || '').trim(),
                 sleepRating: nums[0],
@@ -380,7 +422,7 @@ exports.getPropertyBookings = async (req, res) => {
         const bookings = await prisma.booking.findMany({
             where: {
                 propertyId: property.id,
-                status: 'CONFIRMED',
+                status: { in: ['CONFIRMED', 'ONGOING'] },
             },
             select: {
                 checkin: true,

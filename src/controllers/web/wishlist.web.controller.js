@@ -77,3 +77,37 @@ exports.remove = async (req, res) => {
         res.status(500).json({ success: false, message: 'Failed to remove from wishlist.' });
     }
 };
+
+exports.toggle = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const { propertyId: paramId } = req.params;
+
+        const property = await prisma.property.findFirst({
+            where: { OR: [{ id: paramId }, { propertyId: paramId }] },
+        });
+        if (!property) {
+            return res.status(404).json({ success: false, message: 'Property not found.' });
+        }
+
+        const existing = await prisma.wishlist.findUnique({
+            where: {
+                userId_propertyId: { userId, propertyId: property.id },
+            },
+        });
+
+        if (existing) {
+            await prisma.wishlist.delete({ where: { id: existing.id } });
+            return res.json({ success: true, wishlisted: false });
+        }
+
+        await prisma.wishlist.create({
+            data: { userId, propertyId: property.id },
+        });
+
+        res.json({ success: true, wishlisted: true });
+    } catch (error) {
+        console.error('[web/wishlist] toggle', error);
+        res.status(500).json({ success: false, message: 'Failed to toggle wishlist.' });
+    }
+};

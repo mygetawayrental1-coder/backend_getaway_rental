@@ -16,6 +16,12 @@ const dashboardRoutes = require('./routes/dashboard.routes');
 const captchaRoutes = require('./routes/captcha.routes');
 const guestRequestRoutes = require('./routes/guestRequest.routes');
 const bookingRoutes = require('./routes/booking.routes');
+const notificationRoutes = require('./routes/notification.routes');
+const payoutRoutes = require('./routes/payout.routes');
+const messageRoutes = require('./routes/message.routes');
+const supportRoutes = require('./routes/supportTicket.routes');
+const couponRoutes = require('./routes/coupon.routes');
+const reviewRoutes = require('./routes/review.routes');
 const ownerRequestRoutes = require('./routes/ownerRequest.routes');
 const icalRoutes = require('./routes/ical.routes');
 const webhookRoutes = require('./routes/webhook.routes');
@@ -71,14 +77,22 @@ app.get('/', (req, res) => {
             uploads: '/uploads',
             dashboard: '/dashboard',
             bookings: '/bookings',
+            notifications: '/notifications',
+            payouts: '/payouts',
+            messages: '/messages',
+            support: '/support',
+            coupons: '/coupons',
+            reviews: '/reviews',
             ical: '/ical',
             web: '/api/web',
+            webHosts: '/api/web/hosts',
+            webLocationsProperties: '/api/web/locations/:slug/properties',
             webhooks: '/webhooks',
         },
     });
 });
 
-// API Routes
+// API Routes (mobile + admin)
 app.use('/auth', authRoutes);
 app.use('/properties', propertyRoutes);
 app.use('/inquiries', inquiryRoutes);
@@ -92,10 +106,16 @@ app.use('/dashboard', dashboardRoutes);
 app.use('/captcha', captchaRoutes);
 app.use('/guest-requests', guestRequestRoutes);
 app.use('/bookings', bookingRoutes);
+app.use('/notifications', notificationRoutes);
+app.use('/payouts', payoutRoutes);
+app.use('/messages', messageRoutes);
+app.use('/support', supportRoutes);
+app.use('/coupons', couponRoutes);
+app.use('/reviews', reviewRoutes);
 app.use('/owner-requests', ownerRequestRoutes);
 app.use('/ical', icalRoutes);
 
-// Web app (Next.js) — additive routes only
+// Web app (Next.js) — after mobile/admin routes
 app.use('/api/web/properties', webPropertiesRoutes);
 app.use('/api/web/blog', webBlogRoutes);
 app.use('/api/web/locations', webLocationsRoutes);

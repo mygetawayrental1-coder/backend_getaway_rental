@@ -2,7 +2,8 @@ const express = require('express');
 const rateLimit = require('express-rate-limit');
 const router = express.Router();
 const subscriptionController = require('../controllers/subscription.controller');
-const { authenticate } = require('../middleware/auth');
+const couponController = require('../controllers/coupon.controller');
+const { authenticate, optionalAuth } = require('../middleware/auth');
 const { isAdmin, requireRole, ROLES } = require('../middleware/roles');
 
 const couponLimiter = rateLimit({
@@ -15,7 +16,7 @@ const couponLimiter = rateLimit({
 // Public routes
 router.get('/plans', subscriptionController.getAllPlans);
 router.get('/plans/:id', subscriptionController.getPlanById);
-router.post('/validate-coupon', couponLimiter, subscriptionController.validateCoupon);
+router.post('/validate-coupon', couponLimiter, optionalAuth, couponController.validateCoupon);
 
 // Admin only - plan management
 router.post('/plans', authenticate, isAdmin, subscriptionController.createPlan);

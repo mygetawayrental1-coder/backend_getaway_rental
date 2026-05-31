@@ -1,5 +1,16 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
+// =============================================================
+// MyGetawayRental — Unified Prisma Schema v2.0
+// =============================================================
+// Supports:
+//   • Next.js 14 Website      (Clerk session JWT)
+//   • Flutter App iOS/Android (Clerk Flutter SDK)
+//   • React Admin Portal      (Clerk React SDK)
+//   • Node/Express Backend    (@clerk/express + @clerk/backend)
+//
+// Auth: Full Clerk — NO legacy JWT, NO passwords stored
+// DB:   PostgreSQL (Render)
+// ORM:  Prisma 5
+// =============================================================
 
 generator client {
   provider = "prisma-client-js"
@@ -10,116 +21,715 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// =============================================================
+// ██╗   ██╗███████╗███████╗██████╗ ███████╗
+// ██║   ██║██╔════╝██╔════╝██╔══██╗██╔════╝
+// ██║   ██║███████╗█████╗  ██████╔╝███████╗
+// ██║   ██║╚════██║██╔══╝  ██╔══██╗╚════██║
+// ╚██████╔╝███████║███████╗██║  ██║███████║
+//  ╚═════╝ ╚══════╝╚══════╝╚═╝  ╚═╝╚══════╝
+// All authentication handled by Clerk.
+// clerkId = primary identifier. No passwords stored here.
+// Clerk Webhook (user.created / user.updated) → upsert this model.
+// =============================================================
+
 model User {
-  id               String    @id @default(cuid())
-  clerkId          String?   @unique
-  email            String    @unique
-  password         String
-  firstName        String
-  lastName         String
-  countryCode      String?
-  phoneNumber      String?
-  address          String?
-  profilePic       String?
-  role             String    @default("END_USER") // ADMIN, OWNER, END_USER
-  emailVerified    Boolean   @default(false)
-  verifyToken      String?
-  resetToken       String?
-  resetTokenExpiry DateTime?
-  about            String?
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
+  id          String  @id @default(cuid())
+  clerkId     String  @unique // Clerk user ID — required, all auth via Clerk
+  email       String  @unique
+  firstName   String
+  lastName    String
+  countryCode String?
+  phoneNumber String?
+  address     String?
+  profilePic  String?
+  role        String  @default("END_USER") // ADMIN | OWNER | END_USER
+  about       String?
+  isActive    Boolean @default(true) // admin can suspend
 
-  properties    Property[]
-  inquiries     Inquiry[]
-  subscriptions UserSubscription[]
-  payments      Payment[]
-  ownerRequests OwnerRequest[]
-  wishlists     Wishlist[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  ownedProperties  Property[]
+  inquiries        Inquiry[]
+  subscriptions    UserSubscription[]
+  payments         Payment[]
+  ownerRequests    OwnerRequest[]
+  wishlists        Wishlist[]
+  notifications    Notification[]
+  supportTickets   SupportTicket[]
+  payouts          Payout[]
+  reviews          Review[]
+  messagesSent     Message[]     @relation("MessageSender")
+  messagesReceived Message[]     @relation("MessageReceiver")
+  conversations    Conversation[] @relation("ConversationParticipant")
+
+  @@index([email])
+  @@index([role])
+  @@index([isActive])
 }
 
-model OwnerRequest {
-  id            String   @id @default(cuid())
-  type          String   @default("CUSTOM_PRICING") // CUSTOM_PRICING, OTHER
-  requestedPrice Float
-  numProperties  Int
-  message       String?
-  phone         String?
-  status        String   @default("PENDING") // PENDING, REVIEWED, APPROVED, REJECTED
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-
-  userId String
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-}
+// =============================================================
+// ██████╗ ██████╗  ██████╗ ██████╗ ███████╗██████╗ ████████╗██╗   ██╗
+// ██╔══██╗██╔══██╗██╔═══██╗██╔══██╗██╔════╝██╔══██╗╚══██╔══╝╚██╗ ██╔╝
+// ██████╔╝██████╔╝██║   ██║██████╔╝█████╗  ██████╔╝   ██║    ╚████╔╝
+// ██╔═══╝ ██╔══██╗██║   ██║██╔═══╝ ██╔══╝  ██╔══██╗   ██║     ╚██╔╝
+// ██║     ██║  ██║╚██████╔╝██║     ███████╗██║  ██║   ██║      ██║
+// ╚═╝     ╚═╝  ╚═╝ ╚═════╝ ╚═╝     ╚══════╝╚═╝  ╚═╝   ╚═╝      ╚═╝
+// =============================================================
 
 model Property {
-  id                  String    @id @default(cuid())
-  propertyId          String    @unique @default(cuid())
-  propertyName        String
-  location            String
-  state               String?
-  country             String?
-  latitude            String?
-  longitude           String?
-  guests              Int       @default(0)
-  bedrooms            Int       @default(0)
-  bathrooms           Int       @default(0)
-  kitchens            Int       @default(0)
-  ratePeriodStart     DateTime?
-  ratePeriodEnd       DateTime?
-  minRate             Int       @default(0)
-  nightlyRate         Int       @default(0)
-  weekendRate         Int       @default(0)
-  weeklyRate          Int       @default(0)
-  monthlyRate         Int       @default(0)
-  additionalCharges   String? // JSON string array
-  amenities           String? // JSON string array
-  about               String?
-  policyAndHouseRules String?
-  images              String? // JSON string array
-  icalUrls            String? // JSON object
-  status              String    @default("Active") // Active, Inactive, Pending
-  slug                String?   @unique
-  rentalType          String?
-  areaM2              Int?
-  isFeatured          Boolean   @default(false)
-  isNew               Boolean   @default(true)
-  discountPercent     Int?
-  policyDetails       String?   @db.Text
-  videoUrl            String?
-  createdAt           DateTime  @default(now())
-  updatedAt           DateTime  @updatedAt
+  id         String  @id @default(cuid())
+  propertyId String  @unique @default(cuid()) // public-facing short ID
+  slug       String? @unique                  // SEO slug for website
 
-  ownerId       String
-  owner         User           @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  inquiries     Inquiry[]
+  // Basic info
+  propertyName String
+  about        String? // short marketing description
+  description  String? @db.Text // long description (website rich text)
+
+  // Location
+  location  String
+  state     String?
+  country   String?
+  latitude  String?
+  longitude String?
+  address   String? // full formatted address
+
+  // Capacity
+  guests    Int @default(1)
+  bedrooms  Int @default(1)
+  bathrooms Int @default(1)
+  kitchens  Int @default(0)
+
+  // Pricing (stored in smallest unit, e.g. cents, or just float)
+  minRate           Int  @default(0)
+  nightlyRate       Int  @default(0)
+  weekendRate       Int  @default(0)
+  weeklyRate        Int  @default(0)
+  monthlyRate       Int  @default(0)
+  discountPercent   Int?
+  additionalCharges String? // JSON: [{ name, amount, type: "fixed"|"percent" }]
+
+  // Rate period (seasonal pricing)
+  ratePeriodStart DateTime?
+  ratePeriodEnd   DateTime?
+
+  // Type & features
+  rentalType String? // Apartment | Condo | House | Studio | Duplex House | Townhome
+  areaM2     Int?
+  amenities  String? // JSON: ["Wi-Fi Internet", "Pool", "Air Conditioning", ...]
+  suitability String? // JSON: { pets: bool, children: bool, smoking: bool, wheelchair: bool, elder: bool }
+
+  // Media
+  images   String? // JSON: [url, url, ...]
+  videoUrl String?
+
+  // Rules
+  policyAndHouseRules String?
+  policyDetails       String? @db.Text
+  checkInTime         String? // "15:00"
+  checkOutTime        String? // "11:00"
+  minNights           Int     @default(1)
+  maxNights           Int?
+
+  // Status & flags
+  status     String  @default("Active") // Active | Inactive | Pending
+  isFeatured Boolean @default(false)
+  isNew      Boolean @default(true)
+
+  // iCal calendar sync (Airbnb, VRBO, etc.)
+  icalUrls String? // JSON: { airbnb: url, vrbo: url, ... }
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Owner
+  ownerId String
+  owner   User   @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  // Child relations
+  inquiries    Inquiry[]
   guestRequests GuestRequest[]
-  bookings      Booking[]
-  icalEvents    IcalEvent[]
-  reviews       Review[]
-  wishlists     Wishlist[]
+  bookings     Booking[]
+  icalEvents   IcalEvent[]
+  reviews      Review[]
+  wishlists    Wishlist[]
+  availability PropertyAvailability[]
+  conversations Conversation[]
+
+  @@index([ownerId])
+  @@index([status])
+  @@index([rentalType])
+  @@index([location])
+  @@index([isFeatured])
+  @@index([slug])
 }
 
+// Owner-defined custom availability blocks (beyond bookings)
+// e.g. maintenance, personal use, blocked ranges
+model PropertyAvailability {
+  id          String   @id @default(cuid())
+  propertyId  String
+  property    Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  date        DateTime @db.Date
+  isAvailable Boolean  @default(false) // false = blocked
+  note        String?  // reason e.g. "Maintenance"
+  createdAt   DateTime @default(now())
+
+  @@unique([propertyId, date])
+  @@index([propertyId])
+}
+
+// =============================================================
+// ██████╗  ██████╗  ██████╗ ██╗  ██╗██╗███╗   ██╗ ██████╗ ███████╗
+// ██╔══██╗██╔═══██╗██╔═══██╗██║ ██╔╝██║████╗  ██║██╔════╝ ██╔════╝
+// ██████╔╝██║   ██║██║   ██║█████╔╝ ██║██╔██╗ ██║██║  ███╗███████╗
+// ██╔══██╗██║   ██║██║   ██║██╔═██╗ ██║██║╚██╗██║██║   ██║╚════██║
+// ██████╔╝╚██████╔╝╚██████╔╝██║  ██╗██║██║ ╚████║╚██████╔╝███████║
+// ╚═════╝  ╚═════╝  ╚═════╝ ╚═╝  ╚═╝╚═╝╚═╝  ╚═══╝ ╚═════╝ ╚══════╝
+//
+// FULL LIFECYCLE: Pending → Confirmed → Ongoing → Completed
+//                                              ↘ Cancelled
+// =============================================================
+
+// GuestRequest: unauthenticated contact form (website & mobile)
+// → owner sees these in their dashboard, can convert to Inquiry
+model GuestRequest {
+  id         String   @id @default(cuid())
+  propertyId String
+  property   Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  fullName String
+  email    String
+  phone    String?
+  message  String?
+
+  checkin  DateTime?
+  checkout DateTime?
+  guests   Int       @default(1)
+
+  status String @default("NEW") // NEW | VIEWED | CONTACTED | CLOSED
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([propertyId])
+  @@index([status])
+  @@index([email])
+}
+
+// Inquiry: owner-facing booking pipeline (used in admin portal & owner dashboard)
+// Created from GuestRequest or directly
+model Inquiry {
+  id        String   @id @default(cuid())
+  enquiryId String   @unique @default(cuid())
+
+  propertyId String
+  property   Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  // Property snapshot at time of inquiry
+  propertyName   String?
+  propertyImages String? // JSON
+
+  // Guest details
+  fullName String
+  email    String
+  phone    String?
+  gender   String?
+  guests   Int     @default(1)
+  message  String?
+
+  // Dates
+  checkin  DateTime?
+  checkout DateTime?
+  nights   Int?
+
+  // Pricing
+  nightlyRate Float?
+  totalAmount Float?
+
+  // Status
+  status     String  @default("PENDING") // PENDING | ACCEPTED | REJECTED | BOOKED | CANCELLED
+  adminNotes String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([propertyId])
+  @@index([userId])
+  @@index([status])
+  @@index([email])
+}
+
+// Booking: confirmed reservation with full lifecycle
+// Owner Module lifecycle: Pending → Confirmed → Ongoing → Completed | Cancelled
+model Booking {
+  id        String   @id @default(cuid())
+  bookingId String   @unique @default(cuid())
+
+  propertyId String
+  property   Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  // Guest info (no auth required for booking)
+  guestName    String
+  guestEmail   String
+  guestPhone   String?
+  guestClerkId String? // set if the guest is signed in via Clerk
+
+  // Dates & capacity
+  checkin  DateTime
+  checkout DateTime
+  guests   Int      @default(1)
+  nights   Int
+
+  // Pricing snapshot at time of booking
+  nightlyRate Int
+  weekendRate Int?
+  totalAmount Float
+
+  // Status (Owner Module lifecycle)
+  status       String  @default("PENDING")  // PENDING | CONFIRMED | ONGOING | COMPLETED | CANCELLED
+  cancelledBy  String? // "guest" | "owner" | "admin"
+  cancelReason String?
+
+  // Notes
+  notes      String? // guest note
+  ownerNotes String? // owner private notes
+
+  // Lifecycle timestamps
+  confirmedAt DateTime?
+  checkedInAt DateTime? // owner marks as Ongoing
+  completedAt DateTime?
+  cancelledAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  payment BookingPayment?
+
+  @@index([propertyId])
+  @@index([checkin, checkout])
+  @@index([status])
+  @@index([guestEmail])
+  @@index([guestClerkId])
+}
+
+// Separate payment record for bookings
+model BookingPayment {
+  id        String  @id @default(cuid())
+  bookingId String  @unique
+  booking   Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  amount        Float
+  currency      String  @default("USD")
+  status        String  @default("PENDING") // PENDING | PAID | REFUNDED | FAILED
+  paymentMethod String? // "paypal" | "card" | "razorpay"
+  transactionId String? // external payment gateway reference
+  gatewayData   String? // JSON: raw gateway response
+
+  paidAt      DateTime?
+  refundedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+// =============================================================
+// ██████╗ ███████╗██╗   ██╗██╗███████╗██╗    ██╗███████╗
+// ██╔══██╗██╔════╝██║   ██║██║██╔════╝██║    ██║██╔════╝
+// ██████╔╝█████╗  ██║   ██║██║█████╗  ██║ █╗ ██║███████╗
+// ██╔══██╗██╔══╝  ╚██╗ ██╔╝██║██╔══╝  ██║███╗██║╚════██║
+// ██║  ██║███████╗ ╚████╔╝ ██║███████╗╚███╔███╔╝███████║
+// ╚═╝  ╚═╝╚══════╝  ╚═══╝  ╚═╝╚══════╝ ╚══╝╚══╝ ╚══════╝
+// 5 rating dimensions · owner reply · admin moderation
+// =============================================================
+
 model Review {
-  id              String   @id @default(cuid())
-  propertyId      String
-  property        Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
-  authorName      String
-  authorEmail     String
+  id         String   @id @default(cuid())
+  propertyId String
+  property   Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  // Author (null if anonymous)
+  authorId    String?
+  author      User?   @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  authorName  String
+  authorEmail String
+
+  // 5-dimension ratings (1–5)
   sleepRating     Int
   locationRating  Int
   serviceRating   Int
   clearnessRating Int
   roomsRating     Int
-  overallRating   Float
-  text            String   @db.Text
-  isApproved      Boolean  @default(false)
-  createdAt       DateTime @default(now())
+  overallRating   Float // auto-calculated average of above 5
+
+  text String @db.Text
+
+  // Moderation
+  isApproved Boolean @default(false)
+
+  // Owner reply
+  ownerReply     String?  @db.Text
+  ownerRepliedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([propertyId])
+  @@index([isApproved])
+  @@index([authorId])
 }
 
+// =============================================================
+// ███████╗██╗   ██╗██████╗ ███████╗ ██████╗██████╗ ██╗██████╗ ████████╗██╗ ██████╗ ███╗   ██╗███████╗
+// ██╔════╝██║   ██║██╔══██╗██╔════╝██╔════╝██╔══██╗██║██╔══██╗╚══██╔══╝██║██╔═══██╗████╗  ██║██╔════╝
+// ███████╗██║   ██║██████╔╝███████╗██║     ██████╔╝██║██████╔╝   ██║   ██║██║   ██║██╔██╗ ██║███████╗
+// ╚════██║██║   ██║██╔══██╗╚════██║██║     ██╔══██╗██║██╔═══╝    ██║   ██║██║   ██║██║╚██╗██║╚════██║
+// ███████║╚██████╔╝██████╔╝███████║╚██████╗██║  ██║██║██║        ██║   ██║╚██████╔╝██║ ╚████║███████║
+// ╚══════╝ ╚═════╝ ╚═════╝ ╚══════╝ ╚═════╝╚═╝  ╚═╝╚═╝╚═╝        ╚═╝   ╚═╝ ╚═════╝ ╚═╝  ╚═══╝╚══════╝
+// Owners buy a plan → can list properties
+// =============================================================
+
+model SubscriptionPlan {
+  id            String  @id @default(cuid())
+  name          String
+  price         Float
+  specialPrice  Float?
+  duration      String  // Monthly | Yearly
+  maxProperties Int     @default(1) // how many listings this plan allows
+  features      String? // JSON: ["Feature 1", "Feature 2", ...]
+  status        String  @default("Active") // Active | Inactive
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  subscriptions UserSubscription[]
+  coupons       Coupon[]
+
+  @@index([status])
+}
+
+model UserSubscription {
+  id        String   @id @default(cuid())
+  startDate DateTime @default(now())
+  endDate   DateTime
+  status    String   @default("ACTIVE") // PENDING | ACTIVE | EXPIRED | CANCELLED
+  autoRenew Boolean  @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  userId   String
+  user     User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  planId   String
+  plan     SubscriptionPlan @relation(fields: [planId], references: [id], onDelete: Restrict)
+  couponId String?
+  coupon   Coupon?          @relation(fields: [couponId], references: [id], onDelete: SetNull)
+  payment  Payment?
+
+  @@index([userId])
+  @@index([status])
+}
+
+// Discount/promo codes for subscriptions
+model Coupon {
+  id            String    @id @default(cuid())
+  code          String    @unique
+  discountType  String    // PERCENT | FIXED
+  discountValue Float
+  maxUses       Int?
+  usedCount     Int       @default(0)
+  expiresAt     DateTime?
+  isActive      Boolean   @default(true)
+
+  // Optional: restrict to a specific plan
+  planId String?
+  plan   SubscriptionPlan? @relation(fields: [planId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  subscriptions UserSubscription[]
+
+  @@index([code])
+  @@index([isActive])
+}
+
+// =============================================================
+// ██████╗  █████╗ ██╗   ██╗███╗   ███╗███████╗███╗   ██╗████████╗███████╗
+// ██╔══██╗██╔══██╗╚██╗ ██╔╝████╗ ████║██╔════╝████╗  ██║╚══██╔══╝██╔════╝
+// ██████╔╝███████║ ╚████╔╝ ██╔████╔██║█████╗  ██╔██╗ ██║   ██║   ███████╗
+// ██╔═══╝ ██╔══██║  ╚██╔╝  ██║╚██╔╝██║██╔══╝  ██║╚██╗██║   ██║   ╚════██║
+// ██║     ██║  ██║   ██║   ██║ ╚═╝ ██║███████╗██║ ╚████║   ██║   ███████║
+// ╚═╝     ╚═╝  ╚═╝   ╚═╝   ╚═╝     ╚═╝╚══════╝╚═╝  ╚═══╝   ╚═╝   ╚══════╝
+// Subscription payments (PayPal)
+// Booking payments are in BookingPayment model
+// =============================================================
+
+model Payment {
+  id              String  @id @default(cuid())
+  paypalOrderId   String  @unique
+  paypalPaymentId String?
+  amount          Float
+  currency        String  @default("USD")
+  status          String  @default("created") // created | paid | failed | refunded
+  type            String  // subscription | booking
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  userId         String
+  user           User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subscriptionId String?           @unique
+  subscription   UserSubscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([status])
+}
+
+// =============================================================
+// ███████╗ █████╗ ██████╗ ███╗   ██╗██╗███╗   ██╗ ██████╗ ███████╗
+// ██╔════╝██╔══██╗██╔══██╗████╗  ██║██║████╗  ██║██╔════╝ ██╔════╝
+// █████╗  ███████║██████╔╝██╔██╗ ██║██║██╔██╗ ██║██║  ███╗███████╗
+// ██╔══╝  ██╔══██║██╔══██╗██║╚██╗██║██║██║╚██╗██║██║   ██║╚════██║
+// ███████╗██║  ██║██║  ██║██║ ╚████║██║██║ ╚████║╚██████╔╝███████║
+// ╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝╚═╝╚═╝  ╚═══╝ ╚═════╝ ╚══════╝
+// Owner earnings tracking & payout requests
+// =============================================================
+
+model Payout {
+  id      String @id @default(cuid())
+  ownerId String
+  owner   User   @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  amount   Float
+  currency String @default("USD")
+
+  status    String  @default("PENDING") // PENDING | PROCESSING | PAID | FAILED
+  method    String? // "paypal" | "bank_transfer" | "razorpay"
+  reference String? // external payout reference ID
+  period    String? // "2025-01" — for monthly grouping on earnings dashboard
+
+  notes       String?
+  requestedAt DateTime  @default(now())
+  processedAt DateTime?
+  paidAt      DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([ownerId])
+  @@index([status])
+  @@index([period])
+}
+
+// =============================================================
+// ███╗   ██╗ ██████╗ ████████╗██╗███████╗██╗ ██████╗ █████╗ ████████╗██╗ ██████╗ ███╗   ██╗███████╗
+// ████╗  ██║██╔═══██╗╚══██╔══╝██║██╔════╝██║██╔════╝██╔══██╗╚══██╔══╝██║██╔═══██╗████╗  ██║██╔════╝
+// ██╔██╗ ██║██║   ██║   ██║   ██║█████╗  ██║██║     ███████║   ██║   ██║██║   ██║██╔██╗ ██║███████╗
+// ██║╚██╗██║██║   ██║   ██║   ██║██╔══╝  ██║██║     ██╔══██║   ██║   ██║██║   ██║██║╚██╗██║╚════██║
+// ██║ ╚████║╚██████╔╝   ██║   ██║██║     ██║╚██████╗██║  ██║   ██║   ██║╚██████╔╝██║ ╚████║███████║
+// ╚═╝  ╚═══╝ ╚═════╝    ╚═╝   ╚═╝╚═╝     ╚═╝ ╚═════╝╚═╝  ╚═╝   ╚═╝   ╚═╝ ╚═════╝╚═╝  ╚═══╝╚══════╝
+// Real-time push notifications for all roles across all apps
+// =============================================================
+
+model Notification {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  type  String // booking_pending | booking_confirmed | booking_cancelled |
+               // booking_ongoing | booking_completed | review_new |
+               // payout_processed | inquiry_new | subscription_expiring
+  title String
+  body  String
+  data  String? // JSON: { bookingId, propertyId, reviewId, ... }
+
+  isRead  Boolean   @default(false)
+  readAt  DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, isRead])
+  @@index([userId])
+  @@index([createdAt])
+}
+
+// =============================================================
+// ███╗   ███╗███████╗███████╗███████╗ █████╗  ██████╗ ███████╗███████╗
+// ████╗ ████║██╔════╝██╔════╝██╔════╝██╔══██╗██╔════╝ ██╔════╝██╔════╝
+// ██╔████╔██║█████╗  ███████╗███████╗███████║██║  ███╗█████╗  ███████╗
+// ██║╚██╔╝██║██╔══╝  ╚════██║╚════██║██╔══██║██║   ██║██╔══╝  ╚════██║
+// ██║ ╚═╝ ██║███████╗███████║███████║██║  ██║╚██████╔╝███████╗███████║
+// ╚═╝     ╚═╝╚══════╝╚══════╝╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚══════╝
+// Host ↔ Guest in-app messaging
+// Linked to a property and optional booking
+// =============================================================
+
+model Conversation {
+  id         String   @id @default(cuid())
+  propertyId String?
+  property   Property? @relation(fields: [propertyId], references: [id], onDelete: SetNull)
+  bookingId  String?   // link to a specific booking if applicable
+
+  // Participants (two users — owner + guest)
+  // For unauthenticated guests: guestEmail is used
+  ownerId    String    // always an OWNER User.id
+  guestId    String?   // User.id if guest is registered
+  guestEmail String?   // if guest is not registered
+
+  participants User[] @relation("ConversationParticipant")
+
+  lastMessageAt DateTime @default(now())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  messages Message[]
+
+  @@index([propertyId])
+  @@index([ownerId])
+  @@index([guestId])
+  @@index([lastMessageAt])
+}
+
+model Message {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  senderId   String?
+  sender     User?   @relation("MessageSender", fields: [senderId], references: [id], onDelete: SetNull)
+  receiverId String?
+  receiver   User?   @relation("MessageReceiver", fields: [receiverId], references: [id], onDelete: SetNull)
+
+  // For unauthenticated guests
+  senderName  String?
+  senderEmail String?
+
+  content    String  @db.Text
+  attachment String? // JSON: { url, type, name } — image/file attachment
+  isRead     Boolean @default(false)
+  readAt     DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([conversationId])
+  @@index([receiverId, isRead])
+  @@index([createdAt])
+}
+
+// =============================================================
+// ███████╗██╗   ██╗██████╗ ██████╗  ██████╗ ██████╗ ████████╗
+// ██╔════╝██║   ██║██╔══██╗██╔══██╗██╔═══██╗██╔══██╗╚══██╔══╝
+// ███████╗██║   ██║██████╔╝██████╔╝██║   ██║██████╔╝   ██║
+// ╚════██║██║   ██║██╔═══╝ ██╔═══╝ ██║   ██║██╔══██╗   ██║
+// ███████║╚██████╔╝██║     ██║     ╚██████╔╝██║  ██║   ██║
+// ╚══════╝ ╚═════╝ ╚═╝     ╚═╝      ╚═════╝ ╚═╝  ╚═╝   ╚═╝
+// Owner raises tickets → Admin resolves them
+// =============================================================
+
+model SupportTicket {
+  id       String @id @default(cuid())
+  ticketId String @unique @default(cuid())
+  userId   String
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  subject     String
+  category    String  // booking | payout | property | account | other
+  description String  @db.Text
+
+  status   String @default("OPEN")   // OPEN | IN_PROGRESS | RESOLVED | CLOSED
+  priority String @default("MEDIUM") // LOW | MEDIUM | HIGH | URGENT
+
+  adminNotes  String?
+  resolvedAt  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  replies TicketReply[]
+
+  @@index([userId])
+  @@index([status])
+  @@index([priority])
+}
+
+model TicketReply {
+  id       String        @id @default(cuid())
+  ticketId String
+  ticket   SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  authorId String  // User.id (admin or owner)
+  content  String  @db.Text
+  isAdmin  Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@index([ticketId])
+}
+
+// =============================================================
+// ██████╗  ███████╗ ██████╗ ██╗   ██╗███████╗███████╗████████╗███████╗
+// ██╔══██╗██╔════╝██╔═══██╗██║   ██║██╔════╝██╔════╝╚══██╔══╝██╔════╝
+// ██████╔╝█████╗  ██║   ██║██║   ██║█████╗  ███████╗   ██║   ███████╗
+// ██╔══██╗██╔══╝  ██║▄▄ ██║██║   ██║██╔══╝  ╚════██║   ██║   ╚════██║
+// ██║  ██║███████╗╚██████╔╝╚██████╔╝███████╗███████║   ██║   ███████║
+// ╚═╝  ╚═╝╚══════╝ ╚══▀▀═╝  ╚═════╝ ╚══════╝╚══════╝   ╚═╝   ╚══════╝
+// Owner custom pricing / capacity requests → Admin reviews
+// =============================================================
+
+model OwnerRequest {
+  id             String @id @default(cuid())
+  userId         String
+  user           User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  type           String @default("CUSTOM_PRICING") // CUSTOM_PRICING | OTHER
+  requestedPrice Float
+  numProperties  Int
+  message        String?
+  phone          String?
+  adminReply     String?
+
+  status String @default("PENDING") // PENDING | REVIEWED | APPROVED | REJECTED
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([status])
+}
+
+// =============================================================
+// ██╗    ██╗███████╗██████╗
+// ██║    ██║██╔════╝██╔══██╗
+// ██║ █╗ ██║█████╗  ██████╔╝
+// ██║███╗██║██╔══╝  ██╔══██╗
+// ╚███╔███╔╝███████╗██████╔╝
+//  ╚══╝╚══╝ ╚══════╝╚═════╝
+// Website-only models
+// =============================================================
+
+// General website contact form (not a property inquiry)
+model WebContactMessage {
+  id      String @id @default(cuid())
+  name    String
+  email   String
+  phone   String?
+  subject String
+  message String @db.Text
+
+  isRead   Boolean  @default(false)
+  readAt   DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([isRead])
+  @@index([email])
+}
+
+// Blog posts — created/managed by admin via admin portal
 model BlogPost {
   id           String   @id @default(cuid())
   slug         String   @unique
@@ -129,24 +739,38 @@ model BlogPost {
   category     String
   thumbnailUrl String
   authorName   String
+  readTimeMin  Int?     // estimated read time in minutes
+  tags         String?  // JSON: ["travel", "US", ...]
   isPublished  Boolean  @default(false)
   publishedAt  DateTime @default(now())
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+
+  @@index([isPublished])
+  @@index([category])
+  @@index([slug])
 }
 
+// Location / destination entries for homepage & search
 model Location {
-  id         Int      @id @default(autoincrement())
-  name       String
-  slug       String   @unique
-  parentSlug String?
-  image      String
-  lat        Float?
-  lng        Float?
-  sortOrder  Int      @default(0)
-  createdAt  DateTime @default(now())
+  id          Int      @id @default(autoincrement())
+  name        String
+  slug        String   @unique
+  parentSlug  String?  // for nested: country → state → city
+  image       String
+  description String?
+  lat         Float?
+  lng         Float?
+  sortOrder   Int      @default(0)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([parentSlug])
+  @@index([isActive])
 }
 
+// Saved/favourite properties (website wishlist & mobile favourites)
 model Wishlist {
   id         String   @id @default(cuid())
   userId     String
@@ -156,154 +780,47 @@ model Wishlist {
   createdAt  DateTime @default(now())
 
   @@unique([userId, propertyId])
+  @@index([userId])
 }
 
+// Website newsletter subscribers
 model NewsletterSubscriber {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  createdAt DateTime @default(now())
-}
-
-model WebContactMessage {
-  id        String   @id @default(cuid())
-  name      String
-  email     String
-  phone     String?
-  subject   String
-  message   String   @db.Text
-  isRead    Boolean  @default(false)
-  createdAt DateTime @default(now())
-}
-
-model Inquiry {
   id             String    @id @default(cuid())
-  enquiryId      String    @unique @default(cuid())
-  propertyName   String?
-  propertyImages String?
-  fullName       String
-  email          String
-  phone          String?
-  gender         String?
-  guests         Int       @default(1)
-  totalAmount    Float?
-  message        String?
-  checkin        DateTime?
-  checkout       DateTime?
-  nights         Int?
-  status         String    @default("PENDING") // PENDING, ACCEPTED, REJECTED, BOOKED, CANCELLED
+  email          String    @unique
+  isActive       Boolean   @default(true)
+  unsubscribedAt DateTime?
   createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
 
-  propertyId String
-  property   Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
-  userId     String?
-  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  @@index([isActive])
 }
 
-model SubscriptionPlan {
-  id           String   @id @default(cuid())
-  name         String
-  price        Float
-  specialPrice Float?
-  duration     String // Monthly, Yearly
-  features     String? // JSON string array
-  status       String   @default("Active") // Active, Inactive
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-
-  subscriptions UserSubscription[]
-}
-
-model UserSubscription {
-  id        String   @id @default(cuid())
-  startDate DateTime @default(now())
-  endDate   DateTime
-  status    String   @default("ACTIVE") // PENDING, ACTIVE, EXPIRED, CANCELLED, COMPLETED
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  userId  String
-  user    User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  planId  String
-  plan    SubscriptionPlan @relation(fields: [planId], references: [id], onDelete: Restrict)
-  payment Payment?
-}
-
-model Payment {
-  id              String   @id @default(cuid())
-  paypalOrderId   String   @unique
-  paypalPaymentId String?
-  amount          Float
-  currency        String   @default("USD")
-  status          String   @default("created") // created, paid, failed
-  type            String // subscription, booking
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-
-  userId         String
-  user           User              @relation(fields: [userId], references: [id], onDelete: Cascade)
-  subscriptionId String?           @unique
-  subscription   UserSubscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
-}
-
-// Guest contact requests (no auth required for guests)
-model GuestRequest {
-  id        String    @id @default(cuid())
-  fullName  String
-  email     String
-  phone     String?
-  message   String?
-  checkin   DateTime?
-  checkout  DateTime?
-  guests    Int       @default(1)
-  status    String    @default("NEW") // NEW, VIEWED, CONTACTED, CLOSED
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-
-  propertyId String
-  property   Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
-}
-
-// Confirmed bookings (instant reservations)
-model Booking {
-  id          String   @id @default(cuid())
-  bookingId   String   @unique @default(cuid())
-  propertyId  String
-  guestName   String
-  guestEmail  String
-  guestPhone  String?
-  checkin     DateTime
-  checkout    DateTime
-  guests      Int      @default(1)
-  nights      Int
-  nightlyRate Int
-  totalAmount Float
-  status      String   @default("CONFIRMED") // CONFIRMED, CANCELLED, COMPLETED
-  notes       String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
-
-  @@index([propertyId])
-  @@index([checkin, checkout])
-  @@index([status])
-}
+// =============================================================
+// ██╗ ██████╗ █████╗ ██╗
+// ██║██╔════╝██╔══██╗██║
+// ██║██║     ███████║██║
+// ██║██║     ██╔══██║██║
+// ██║╚██████╗██║  ██║███████╗
+// ╚═╝ ╚═════╝╚═╝  ╚═╝╚══════╝
+// iCal calendar sync (Airbnb, VRBO, etc.)
+// =============================================================
 
 model IcalEvent {
   id         String   @id @default(cuid())
   uid        String   @unique
   inquiryId  String?
   propertyId String
+  property   Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
   dtStart    DateTime
   dtEnd      DateTime
+  summary    String?
   icsContent String?
-  source     String   @default("mygatewayrental")
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  source     String   @default("mygetawayrental") // mygetawayrental | airbnb | vrbo | other
 
-  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([propertyId])
   @@index([uid])
+  @@index([dtStart, dtEnd])
 }

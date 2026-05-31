@@ -1,16 +1,188 @@
 const { Prisma } = require('@prisma/client');
 const prisma = require('../config/database');
-const { getUserFromBearerToken } = require('../services/authResolve.service');
+const { getPagination, formatPaginatedResponse, parseJsonField } = require('../utils/helpers');
+const { createTypedNotification, NOTIFICATION_TYPES } = require('../services/notification.service');
+
+const BLOCKING_STATUSES = ['CONFIRMED', 'ONGOING'];
+
+function startOfDay(d) {
+    const x = new Date(d);
+    x.setHours(0, 0, 0, 0);
+    return x;
+}
+
+function parseDates(checkin, checkout) {
+    const checkinDate = startOfDay(checkin);
+    const checkoutDate = startOfDay(checkout);
+    return { checkinDate, checkoutDate };
+}
+
+function validateDateRange(checkinDate, checkoutDate) {
+    if (checkinDate >= checkoutDate) {
+        return 'Check-out date must be after check-in date.';
+    }
+    const today = startOfDay(new Date());
+    if (checkinDate < today) {
+        return 'Check-in date cannot be in the past.';
+    }
+    return null;
+}
+
+function calculateNights(checkinDate, checkoutDate) {
+    return Math.ceil((checkoutDate - checkinDate) / (1000 * 60 * 60 * 24));
+}
+
+/** Sum nightly + weekend rates for each night (check-in day through night before checkout). */
+function calculateTotalAmount(checkinDate, checkoutDate, nightlyRate, weekendRate) {
+    let total = 0;
+    const cur = new Date(checkinDate);
+    const end = new Date(checkoutDate);
+    while (cur < end) {
+        const day = cur.getDay();
+        const isWeekend = day === 0 || day === 6;
+        const rate =
+            isWeekend && weekendRate != null && weekendRate > 0 ? weekendRate : nightlyRate;
+        total += rate;
+        cur.setDate(cur.getDate() + 1);
+    }
+    return total;
+}
+
+function bookingOverlapFilter(propertyId, checkinDate, checkoutDate, statuses = BLOCKING_STATUSES) {
+    return {
+        propertyId,
+        status: { in: statuses },
+        checkin: { lt: checkoutDate },
+        checkout: { gt: checkinDate },
+    };
+}
+
+async function resolveProperty(propertyId) {
+    return prisma.property.findFirst({
+        where: { OR: [{ id: propertyId }, { propertyId }] },
+        include: {
+            owner: {
+                select: { id: true, email: true, firstName: true, lastName: true },
+            },
+        },
+    });
+}
+
+async function findBookingByParam(id) {
+    return prisma.booking.findFirst({
+        where: { OR: [{ id }, { bookingId: id }] },
+        include: {
+            property: {
+                select: {
+                    id: true,
+                    propertyId: true,
+                    propertyName: true,
+                    location: true,
+                    state: true,
+                    country: true,
+                    images: true,
+                    slug: true,
+                    ownerId: true,
+                    owner: {
+                        select: {
+                            id: true,
+                            firstName: true,
+                            lastName: true,
+                            email: true,
+                            phoneNumber: true,
+                        },
+                    },
+                },
+            },
+            payment: true,
+        },
+    });
+}
+
+
+function formatPayment(payment) {
+    if (!payment) return null;
+    return {
+        ...payment,
+        gatewayData: parseJsonField(payment.gatewayData),
+    };
+}
+
+function formatBookingRow(booking, { includeOwnerNotes = false } = {}) {
+    const { property, payment, ...rest } = booking;
+    if (!includeOwnerNotes) {
+        delete rest.ownerNotes;
+    }
+    const images = parseJsonField(property?.images);
+    return {
+        ...rest,
+        property: property
+            ? {
+                  id: property.id,
+                  propertyId: property.propertyId,
+                  propertyName: property.propertyName,
+                  location: property.location,
+                  state: property.state,
+                  country: property.country,
+                  image: Array.isArray(images) ? images[0] || null : null,
+                  slug: property.slug,
+                  owner: property.owner,
+              }
+            : undefined,
+        payment: formatPayment(payment),
+    };
+}
+
+function isPropertyOwner(booking, user) {
+    return booking.property.ownerId === user.id;
+}
+
+function isBookingGuest(booking, user) {
+    if (booking.guestClerkId && booking.guestClerkId === user.id) return true;
+    if (
+        booking.guestEmail &&
+        user.email &&
+        booking.guestEmail.trim().toLowerCase() === user.email.trim().toLowerCase()
+    ) {
+        return true;
+    }
+    return false;
+}
+
+async function notifyGuest(booking, property, type) {
+    if (!booking.guestClerkId) return;
+    await createTypedNotification({
+        userId: booking.guestClerkId,
+        type,
+        data: {
+            bookingId: booking.id,
+            propertyId: property.id,
+            propertyName: property.propertyName,
+        },
+        vars: { propertyName: property.propertyName },
+    });
+}
+
+async function notifyOwner(ownerId, booking, property, type) {
+    await createTypedNotification({
+        userId: ownerId,
+        type,
+        data: {
+            bookingId: booking.id,
+            propertyId: property.id,
+            propertyName: property.propertyName,
+        },
+        vars: { propertyName: property.propertyName },
+    });
+}
 
 /**
- * Check property availability for given dates
  * POST /bookings/check-availability
  */
 const checkAvailability = async (req, res) => {
     try {
         const { propertyId, checkin, checkout } = req.body;
 
-        // Validate inputs
         if (!propertyId || !checkin || !checkout) {
             return res.status(400).json({
                 success: false,
@@ -18,102 +190,63 @@ const checkAvailability = async (req, res) => {
             });
         }
 
-        const checkinDate = new Date(checkin);
-        const checkoutDate = new Date(checkout);
-
-        // Validate dates
-        if (checkinDate >= checkoutDate) {
-            return res.status(400).json({
-                success: false,
-                message: 'Check-out date must be after check-in date.',
-            });
+        const { checkinDate, checkoutDate } = parseDates(checkin, checkout);
+        const dateError = validateDateRange(checkinDate, checkoutDate);
+        if (dateError) {
+            return res.status(400).json({ success: false, message: dateError });
         }
 
-        if (checkinDate < new Date()) {
-            return res.status(400).json({
-                success: false,
-                message: 'Check-in date cannot be in the past.',
-            });
-        }
-
-        // Get property
-        const property = await prisma.property.findFirst({
-            where: {
-                OR: [{ id: propertyId }, { propertyId }],
-            },
-        });
-
+        const property = await resolveProperty(propertyId);
         if (!property) {
-            return res.status(404).json({
-                success: false,
-                message: 'Property not found.',
-            });
+            return res.status(404).json({ success: false, message: 'Property not found.' });
         }
 
-        // Check for conflicting bookings
-        const conflictingBooking = await prisma.booking.findFirst({
-            where: {
-                propertyId: property.id,
-                status: 'CONFIRMED',
-                OR: [
-                    // New booking starts during existing booking
-                    {
-                        checkin: { lte: checkinDate },
-                        checkout: { gt: checkinDate },
-                    },
-                    // New booking ends during existing booking
-                    {
-                        checkin: { lt: checkoutDate },
-                        checkout: { gte: checkoutDate },
-                    },
-                    // New booking completely contains existing booking
-                    {
-                        checkin: { gte: checkinDate },
-                        checkout: { lte: checkoutDate },
-                    },
-                ],
-            },
-        });
+        const [blockedRows, conflicts] = await Promise.all([
+            prisma.propertyAvailability.findMany({
+                where: {
+                    propertyId: property.id,
+                    isAvailable: false,
+                    date: { gte: checkinDate, lt: checkoutDate },
+                },
+                orderBy: { date: 'asc' },
+            }),
+            prisma.booking.findMany({
+                where: bookingOverlapFilter(property.id, checkinDate, checkoutDate),
+                select: {
+                    id: true,
+                    bookingId: true,
+                    checkin: true,
+                    checkout: true,
+                    status: true,
+                    guestName: true,
+                },
+            }),
+        ]);
 
-        // Calculate nights and pricing
-        const nights = Math.ceil((checkoutDate - checkinDate) / (1000 * 60 * 60 * 24));
-        const nightlyRate = property.nightlyRate || property.minRate || 0;
-        const totalAmount = nights * nightlyRate;
-
-        // Get all blocked dates for this property
-        const existingBookings = await prisma.booking.findMany({
-            where: {
-                propertyId: property.id,
-                status: 'CONFIRMED',
-                checkout: { gte: new Date() },
-            },
-            select: {
-                checkin: true,
-                checkout: true,
-            },
-            orderBy: {
-                checkin: 'asc',
-            },
-        });
-
-        const blockedDates = existingBookings.map(b => ({
-            start: b.checkin,
-            end: b.checkout,
+        const blockedDates = blockedRows.map((r) => ({
+            date: r.date,
+            note: r.note,
         }));
 
-        if (conflictingBooking) {
-            return res.status(200).json({
-                success: false,
-                available: false,
-                message: 'Property is not available for the selected dates.',
-                blockedDates,
-            });
-        }
+        const available = blockedDates.length === 0 && conflicts.length === 0;
+        const nights = calculateNights(checkinDate, checkoutDate);
+        const nightlyRate = property.nightlyRate || property.minRate || 0;
+        const weekendRate = property.weekendRate || null;
+        const totalAmount = calculateTotalAmount(
+            checkinDate,
+            checkoutDate,
+            nightlyRate,
+            weekendRate,
+        );
 
         res.json({
             success: true,
-            available: true,
-            message: 'Property is available for booking.',
+            available,
+            message: available
+                ? 'Property is available for booking.'
+                : 'Property is not available for the selected dates.',
+            blockedDates,
+            conflicts,
             data: {
                 propertyId: property.id,
                 propertyName: property.propertyName,
@@ -121,21 +254,17 @@ const checkAvailability = async (req, res) => {
                 checkout: checkoutDate,
                 nights,
                 nightlyRate,
+                weekendRate,
                 totalAmount,
-                blockedDates,
             },
         });
     } catch (error) {
         console.error('Check availability error:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to check availability.',
-        });
+        res.status(500).json({ success: false, message: 'Failed to check availability.' });
     }
 };
 
 /**
- * Create a new booking (instant reservation)
  * POST /bookings/create
  */
 const createBooking = async (req, res) => {
@@ -151,7 +280,6 @@ const createBooking = async (req, res) => {
             notes,
         } = req.body;
 
-        // Validate required fields
         if (!propertyId || !guestName || !guestEmail || !checkin || !checkout) {
             return res.status(400).json({
                 success: false,
@@ -159,90 +287,78 @@ const createBooking = async (req, res) => {
             });
         }
 
-        const checkinDate = new Date(checkin);
-        const checkoutDate = new Date(checkout);
-
-        // Validate dates
-        if (checkinDate >= checkoutDate) {
-            return res.status(400).json({
-                success: false,
-                message: 'Check-out date must be after check-in date.',
-            });
+        const { checkinDate, checkoutDate } = parseDates(checkin, checkout);
+        const dateError = validateDateRange(checkinDate, checkoutDate);
+        if (dateError) {
+            return res.status(400).json({ success: false, message: dateError });
         }
 
-        if (checkinDate < new Date()) {
-            return res.status(400).json({
-                success: false,
-                message: 'Check-in date cannot be in the past.',
-            });
+        const property = await resolveProperty(propertyId);
+        if (!property) {
+            return res.status(404).json({ success: false, message: 'Property not found.' });
         }
 
-        // Get property
-        const property = await prisma.property.findFirst({
+        const blocked = await prisma.propertyAvailability.findFirst({
             where: {
-                OR: [{ id: propertyId }, { propertyId }],
-            },
-            include: {
-                owner: {
-                    select: { email: true, firstName: true, lastName: true },
-                },
+                propertyId: property.id,
+                isAvailable: false,
+                date: { gte: checkinDate, lt: checkoutDate },
             },
         });
 
-        if (!property) {
-            return res.status(404).json({
+        if (blocked) {
+            return res.status(409).json({
                 success: false,
-                message: 'Property not found.',
+                message: 'Selected dates include blocked nights.',
             });
         }
 
-        const overlapWhere = {
-            propertyId: property.id,
-            status: 'CONFIRMED',
-            OR: [
-                {
-                    checkin: { lte: checkinDate },
-                    checkout: { gt: checkinDate },
-                },
-                {
-                    checkin: { lt: checkoutDate },
-                    checkout: { gte: checkoutDate },
-                },
-                {
-                    checkin: { gte: checkinDate },
-                    checkout: { lte: checkoutDate },
-                },
-            ],
-        };
+        const nights = calculateNights(checkinDate, checkoutDate);
+        const nightlyRate = property.nightlyRate || property.minRate || 0;
+        const weekendRate = property.weekendRate || null;
+        const totalAmount = calculateTotalAmount(
+            checkinDate,
+            checkoutDate,
+            nightlyRate,
+            weekendRate,
+        );
+
+        const guestClerkId = req.user?.id || null;
 
         let booking;
         try {
             booking = await prisma.$transaction(async (tx) => {
-                const conflictingBooking = await tx.booking.findFirst({
-                    where: overlapWhere,
+                const conflict = await tx.booking.findFirst({
+                    where: bookingOverlapFilter(property.id, checkinDate, checkoutDate),
                 });
-                if (conflictingBooking) {
-                    return null;
-                }
-
-                const nights = Math.ceil((checkoutDate - checkinDate) / (1000 * 60 * 60 * 24));
-                const nightlyRate = property.nightlyRate || property.minRate || 0;
-                const totalAmount = nights * nightlyRate;
+                if (conflict) return null;
 
                 return tx.booking.create({
                     data: {
                         propertyId: property.id,
                         guestName,
                         guestEmail,
-                        guestPhone,
+                        guestPhone: guestPhone || null,
+                        guestClerkId,
                         checkin: checkinDate,
                         checkout: checkoutDate,
                         guests: parseInt(guests, 10) || 1,
                         nights,
                         nightlyRate,
+                        weekendRate,
                         totalAmount,
-                        notes,
-                        status: 'CONFIRMED',
+                        notes: notes || null,
+                        status: 'PENDING',
+                    },
+                    include: {
+                        property: {
+                            select: {
+                                id: true,
+                                propertyName: true,
+                                location: true,
+                                ownerId: true,
+                            },
+                        },
                     },
                 });
             }, {
@@ -254,7 +370,7 @@ const createBooking = async (req, res) => {
             if (error.code === 'P2034') {
                 return res.status(409).json({
                     success: false,
-                    message: 'Could not confirm booking due to a conflict. Please try again.',
+                    message: 'Could not create booking due to a conflict. Please try again.',
                 });
             }
             throw error;
@@ -267,322 +383,395 @@ const createBooking = async (req, res) => {
             });
         }
 
+        try {
+            await notifyOwner(
+                property.ownerId,
+                booking,
+                property,
+                NOTIFICATION_TYPES.BOOKING_PENDING,
+            );
+        } catch (notifyErr) {
+            console.error('Booking pending notification error:', notifyErr);
+        }
+
         res.status(201).json({
             success: true,
-            message: 'Booking confirmed successfully!',
-            data: {
-                bookingId: booking.bookingId,
-                id: booking.id,
-                propertyName: property.propertyName,
-                propertyLocation: property.location,
-                guestName: booking.guestName,
-                guestEmail: booking.guestEmail,
-                checkin: booking.checkin,
-                checkout: booking.checkout,
-                guests: booking.guests,
-                nights: booking.nights,
-                nightlyRate: booking.nightlyRate,
-                totalAmount: booking.totalAmount,
-                status: booking.status,
-                createdAt: booking.createdAt,
-            },
+            message: 'Booking request submitted. The host will confirm shortly.',
+            data: formatBookingRow({ ...booking, payment: null }),
         });
     } catch (error) {
         console.error('Create booking error:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to create booking.',
-        });
+        res.status(500).json({ success: false, message: 'Failed to create booking.' });
     }
 };
 
 /**
- * Get booking by ID
+ * GET /bookings/owner/orders
+ */
+const getOwnerBookings = async (req, res) => {
+    try {
+        const { status, page, limit, sort } = req.query;
+        const pagination = getPagination(page, limit);
+
+        const where = {
+            property: { ownerId: req.user.id },
+        };
+        if (status) where.status = String(status).toUpperCase();
+
+        const orderBy =
+            sort === 'checkin_asc'
+                ? { checkin: 'asc' }
+                : { createdAt: 'desc' };
+
+        const [rows, total] = await Promise.all([
+            prisma.booking.findMany({
+                where,
+                skip: pagination.skip,
+                take: pagination.take,
+                orderBy,
+                include: {
+                    property: {
+                        select: {
+                            propertyName: true,
+                            location: true,
+                            images: true,
+                        },
+                    },
+                    payment: true,
+                },
+            }),
+            prisma.booking.count({ where }),
+        ]);
+
+        res.json({
+            success: true,
+            ...formatPaginatedResponse(
+                rows.map((b) => formatBookingRow(b, { includeOwnerNotes: true })),
+                total,
+                pagination.page,
+                pagination.limit,
+            ),
+        });
+    } catch (error) {
+        console.error('Get owner bookings error:', error);
+        res.status(500).json({ success: false, message: 'Failed to fetch bookings.' });
+    }
+};
+
+/**
+ * GET /bookings/my
+ */
+const getGuestBookings = async (req, res) => {
+    try {
+        const { status, page, limit } = req.query;
+        const pagination = getPagination(page, limit);
+
+        const where = { guestClerkId: req.user.id };
+        if (status) where.status = String(status).toUpperCase();
+
+        const [rows, total] = await Promise.all([
+            prisma.booking.findMany({
+                where,
+                skip: pagination.skip,
+                take: pagination.take,
+                orderBy: { checkin: 'desc' },
+                include: {
+                    property: {
+                        select: {
+                            propertyName: true,
+                            location: true,
+                            images: true,
+                            slug: true,
+                        },
+                    },
+                    payment: true,
+                },
+            }),
+            prisma.booking.count({ where }),
+        ]);
+
+        res.json({
+            success: true,
+            ...formatPaginatedResponse(
+                rows.map((b) => formatBookingRow(b)),
+                total,
+                pagination.page,
+                pagination.limit,
+            ),
+        });
+    } catch (error) {
+        console.error('Get guest bookings error:', error);
+        res.status(500).json({ success: false, message: 'Failed to fetch your bookings.' });
+    }
+};
+
+/**
  * GET /bookings/:id
  */
 const getBookingById = async (req, res) => {
     try {
-        const { id } = req.params;
-        const guestEmailQuery = req.query.guestEmail
-            ? String(req.query.guestEmail).trim().toLowerCase()
-            : null;
-
-        let authedUser = null;
-        const authHeader = req.headers.authorization;
-        if (authHeader && authHeader.startsWith('Bearer ')) {
-            authedUser = await getUserFromBearerToken(authHeader.split(' ')[1]);
-            if (authedUser) {
-                authedUser = {
-                    id: authedUser.id,
-                    email: authedUser.email,
-                    role: authedUser.role,
-                };
-            }
-        }
-
-        const booking = await prisma.booking.findFirst({
-            where: {
-                OR: [{ id }, { bookingId: id }],
-            },
-            include: {
-                property: {
-                    select: {
-                        propertyName: true,
-                        location: true,
-                        state: true,
-                        country: true,
-                        images: true,
-                        amenities: true,
-                        ownerId: true,
-                        owner: {
-                            select: {
-                                firstName: true,
-                                lastName: true,
-                                email: true,
-                                phoneNumber: true,
-                            },
-                        },
-                    },
-                },
-            },
-        });
+        const booking = await findBookingByParam(req.params.id);
 
         if (!booking) {
-            return res.status(404).json({
-                success: false,
-                message: 'Booking not found.',
-            });
+            return res.status(404).json({ success: false, message: 'Booking not found.' });
         }
 
-        const guestEmailNorm = (booking.guestEmail || '').trim().toLowerCase();
-        let allowed = false;
-        if (authedUser) {
-            if (authedUser.role === 'ADMIN') {
-                allowed = true;
-            } else if (booking.property.ownerId === authedUser.id) {
-                allowed = true;
-            } else if (guestEmailNorm && authedUser.email
-                && guestEmailNorm === authedUser.email.trim().toLowerCase()) {
-                allowed = true;
-            }
-        }
-        if (!allowed && guestEmailQuery && guestEmailNorm === guestEmailQuery) {
-            allowed = true;
-        }
+        const user = req.user;
+        const allowed =
+            user.role === 'ADMIN' ||
+            isPropertyOwner(booking, user) ||
+            isBookingGuest(booking, user);
 
         if (!allowed) {
-            if (!authedUser && !guestEmailQuery) {
-                return res.status(401).json({
-                    success: false,
-                    message: 'Sign in, or provide guestEmail matching this booking, to view details.',
-                });
-            }
-            return res.status(403).json({
-                success: false,
-                message: 'Access denied.',
-            });
+            return res.status(403).json({ success: false, message: 'Access denied.' });
         }
-
-        const { ownerId, ...propertyRest } = booking.property;
 
         res.json({
             success: true,
-            data: {
-                bookingId: booking.bookingId,
-                id: booking.id,
-                guestName: booking.guestName,
-                guestEmail: booking.guestEmail,
-                guestPhone: booking.guestPhone,
-                checkin: booking.checkin,
-                checkout: booking.checkout,
-                guests: booking.guests,
-                nights: booking.nights,
-                nightlyRate: booking.nightlyRate,
-                totalAmount: booking.totalAmount,
-                status: booking.status,
-                notes: booking.notes,
-                createdAt: booking.createdAt,
-                property: {
-                    propertyName: propertyRest.propertyName,
-                    location: propertyRest.location,
-                    state: propertyRest.state,
-                    country: propertyRest.country,
-                    images: propertyRest.images,
-                    amenities: propertyRest.amenities,
-                    owner: propertyRest.owner,
-                },
-            },
+            data: formatBookingRow(booking, {
+                includeOwnerNotes: isPropertyOwner(booking, user) || user.role === 'ADMIN',
+            }),
         });
     } catch (error) {
         console.error('Get booking error:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to fetch booking.',
-        });
+        res.status(500).json({ success: false, message: 'Failed to fetch booking.' });
     }
 };
 
+async function loadBookingForOwnerAction(id, user) {
+    const booking = await findBookingByParam(id);
+    if (!booking) {
+        return { error: { status: 404, message: 'Booking not found.' } };
+    }
+    if (user.role !== 'ADMIN' && !isPropertyOwner(booking, user)) {
+        return { error: { status: 403, message: 'Only the property owner can perform this action.' } };
+    }
+    return { booking };
+}
+
 /**
- * Get all bookings for a property (Owner/Admin only)
- * GET /bookings/property/:propertyId
+ * PATCH /bookings/:id/confirm
  */
-const getPropertyBookings = async (req, res) => {
+const confirmBooking = async (req, res) => {
     try {
-        const { propertyId } = req.params;
+        const { booking, error } = await loadBookingForOwnerAction(req.params.id, req.user);
+        if (error) return res.status(error.status).json({ success: false, message: error.message });
 
-        // Get property and verify ownership
-        const property = await prisma.property.findFirst({
-            where: {
-                OR: [{ id: propertyId }, { propertyId }],
-            },
-        });
-
-        if (!property) {
-            return res.status(404).json({
+        if (booking.status !== 'PENDING') {
+            return res.status(400).json({
                 success: false,
-                message: 'Property not found.',
+                message: `Cannot confirm a booking with status ${booking.status}.`,
             });
         }
 
-        // Check authorization
-        if (req.user.role !== 'ADMIN' && property.ownerId !== req.user.id) {
-            return res.status(403).json({
-                success: false,
-                message: 'Access denied.',
-            });
-        }
-
-        const bookings = await prisma.booking.findMany({
-            where: {
-                propertyId: property.id,
-            },
-            orderBy: {
-                checkin: 'desc',
-            },
+        const updated = await prisma.booking.update({
+            where: { id: booking.id },
+            data: { status: 'CONFIRMED', confirmedAt: new Date() },
+            include: { property: true, payment: true },
         });
+
+        try {
+            await notifyGuest(updated, updated.property, NOTIFICATION_TYPES.BOOKING_CONFIRMED);
+        } catch (notifyErr) {
+            console.error('Booking confirmed notification error:', notifyErr);
+        }
 
         res.json({
             success: true,
-            data: bookings,
+            message: 'Booking confirmed.',
+            data: formatBookingRow(updated, { includeOwnerNotes: true }),
         });
     } catch (error) {
-        console.error('Get property bookings error:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to fetch bookings.',
-        });
+        console.error('Confirm booking error:', error);
+        res.status(500).json({ success: false, message: 'Failed to confirm booking.' });
     }
 };
 
 /**
- * Cancel a booking
+ * PATCH /bookings/:id/ongoing
+ */
+const markOngoing = async (req, res) => {
+    try {
+        const { booking, error } = await loadBookingForOwnerAction(req.params.id, req.user);
+        if (error) return res.status(error.status).json({ success: false, message: error.message });
+
+        if (booking.status !== 'CONFIRMED') {
+            return res.status(400).json({
+                success: false,
+                message: 'Only confirmed bookings can be marked as ongoing.',
+            });
+        }
+
+        const updated = await prisma.booking.update({
+            where: { id: booking.id },
+            data: { status: 'ONGOING', checkedInAt: new Date() },
+            include: { property: true, payment: true },
+        });
+
+        try {
+            await notifyGuest(updated, updated.property, NOTIFICATION_TYPES.BOOKING_ONGOING);
+        } catch (notifyErr) {
+            console.error('Booking ongoing notification error:', notifyErr);
+        }
+
+        res.json({
+            success: true,
+            message: 'Guest checked in.',
+            data: formatBookingRow(updated, { includeOwnerNotes: true }),
+        });
+    } catch (error) {
+        console.error('Mark ongoing error:', error);
+        res.status(500).json({ success: false, message: 'Failed to update booking.' });
+    }
+};
+
+/**
+ * PATCH /bookings/:id/complete
+ */
+const completeBooking = async (req, res) => {
+    try {
+        const { booking, error } = await loadBookingForOwnerAction(req.params.id, req.user);
+        if (error) return res.status(error.status).json({ success: false, message: error.message });
+
+        if (booking.status !== 'ONGOING') {
+            return res.status(400).json({
+                success: false,
+                message: 'Only ongoing bookings can be marked complete.',
+            });
+        }
+
+        const updated = await prisma.booking.update({
+            where: { id: booking.id },
+            data: { status: 'COMPLETED', completedAt: new Date() },
+            include: { property: true, payment: true },
+        });
+
+        try {
+            await notifyGuest(updated, updated.property, NOTIFICATION_TYPES.BOOKING_COMPLETED);
+        } catch (notifyErr) {
+            console.error('Booking completed notification error:', notifyErr);
+        }
+
+        res.json({
+            success: true,
+            message: 'Booking marked complete.',
+            data: formatBookingRow(updated, { includeOwnerNotes: true }),
+        });
+    } catch (error) {
+        console.error('Complete booking error:', error);
+        res.status(500).json({ success: false, message: 'Failed to complete booking.' });
+    }
+};
+
+/**
  * PATCH /bookings/:id/cancel
  */
 const cancelBooking = async (req, res) => {
     try {
-        const { id } = req.params;
-
-        const booking = await prisma.booking.findFirst({
-            where: {
-                OR: [{ id }, { bookingId: id }],
-            },
-            include: {
-                property: {
-                    select: { ownerId: true },
-                },
-            },
-        });
+        const { reason } = req.body || {};
+        const booking = await findBookingByParam(req.params.id);
 
         if (!booking) {
-            return res.status(404).json({
-                success: false,
-                message: 'Booking not found.',
-            });
+            return res.status(404).json({ success: false, message: 'Booking not found.' });
         }
 
         if (booking.status === 'CANCELLED') {
-            return res.status(400).json({
-                success: false,
-                message: 'Booking is already cancelled.',
-            });
+            return res.status(400).json({ success: false, message: 'Booking is already cancelled.' });
+        }
+        if (booking.status === 'COMPLETED') {
+            return res.status(400).json({ success: false, message: 'Completed bookings cannot be cancelled.' });
         }
 
-        // Authorization: only property owner, admin, or the guest who booked
-        const isOwner = booking.property.ownerId === req.user.id;
-        const isAdmin = req.user.role === 'ADMIN';
-        const isGuest = booking.guestEmail === req.user.email;
+        const user = req.user;
+        const isOwner = isPropertyOwner(booking, user);
+        const isGuest = isBookingGuest(booking, user);
+        const isAdmin = user.role === 'ADMIN';
 
-        if (!isOwner && !isAdmin && !isGuest) {
+        if (!isOwner && !isGuest && !isAdmin) {
             return res.status(403).json({
                 success: false,
-                message: 'Access denied. Only the property owner or the guest can cancel this booking.',
+                message: 'Access denied.',
             });
         }
 
-        const updatedBooking = await prisma.booking.update({
+        let cancelledBy = 'guest';
+        if (isAdmin) cancelledBy = 'admin';
+        else if (isOwner && !isGuest) cancelledBy = 'owner';
+        else if (isOwner && isGuest) cancelledBy = 'owner';
+
+        const updated = await prisma.booking.update({
             where: { id: booking.id },
-            data: { status: 'CANCELLED' },
+            data: {
+                status: 'CANCELLED',
+                cancelledAt: new Date(),
+                cancelledBy,
+                cancelReason: reason || null,
+            },
+            include: { property: true, payment: true },
         });
+
+        try {
+            if (cancelledBy === 'guest' || cancelledBy === 'admin') {
+                await notifyOwner(
+                    booking.property.ownerId,
+                    updated,
+                    updated.property,
+                    NOTIFICATION_TYPES.BOOKING_CANCELLED,
+                );
+            }
+            if ((cancelledBy === 'owner' || cancelledBy === 'admin') && updated.guestClerkId) {
+                await notifyGuest(updated, updated.property, NOTIFICATION_TYPES.BOOKING_CANCELLED);
+            }
+        } catch (notifyErr) {
+            console.error('Booking cancelled notification error:', notifyErr);
+        }
 
         res.json({
             success: true,
-            message: 'Booking cancelled successfully.',
-            data: updatedBooking,
+            message: 'Booking cancelled.',
+            data: formatBookingRow(updated, { includeOwnerNotes: isOwner || isAdmin }),
         });
     } catch (error) {
         console.error('Cancel booking error:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to cancel booking.',
-        });
+        res.status(500).json({ success: false, message: 'Failed to cancel booking.' });
     }
 };
 
 /**
- * Get all owner orders (bookings globally across all owner properties)
- * GET /bookings/owner/orders
+ * PATCH /bookings/:id/notes
  */
-const getOwnerBookingsGlobal = async (req, res) => {
+const updateOwnerNotes = async (req, res) => {
     try {
-        const ownerId = req.user.id; // From authenticate middleware
+        const { ownerNotes } = req.body;
+        const { booking, error } = await loadBookingForOwnerAction(req.params.id, req.user);
+        if (error) return res.status(error.status).json({ success: false, message: error.message });
 
-        const bookings = await prisma.booking.findMany({
-            where: {
-                property: {
-                    ownerId: ownerId,
-                },
-            },
-            include: {
-                property: {
-                    select: {
-                        propertyName: true,
-                        location: true,
-                    },
-                },
-            },
-            orderBy: {
-                createdAt: 'desc',
-            },
+        const updated = await prisma.booking.update({
+            where: { id: booking.id },
+            data: { ownerNotes: ownerNotes != null ? String(ownerNotes) : null },
+            include: { property: true, payment: true },
         });
 
         res.json({
             success: true,
-            data: bookings,
+            message: 'Owner notes updated.',
+            data: formatBookingRow(updated, { includeOwnerNotes: true }),
         });
     } catch (error) {
-        console.error('Get global owner bookings error:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to fetch global bookings.',
-        });
+        console.error('Update owner notes error:', error);
+        res.status(500).json({ success: false, message: 'Failed to update notes.' });
     }
 };
 
 module.exports = {
     checkAvailability,
     createBooking,
+    getOwnerBookings,
+    getGuestBookings,
     getBookingById,
-    getPropertyBookings,
-    getOwnerBookingsGlobal,
+    confirmBooking,
+    markOngoing,
+    completeBooking,
     cancelBooking,
+    updateOwnerNotes,
 };
