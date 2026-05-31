@@ -459,6 +459,65 @@ const getOwnerBookings = async (req, res) => {
 };
 
 /**
+ * GET /bookings/admin/all
+ */
+const getAdminBookings = async (req, res) => {
+    try {
+        const { status, page, limit, sort } = req.query;
+        const pagination = getPagination(page, limit);
+
+        const where = {};
+        if (status) where.status = String(status).toUpperCase();
+
+        const orderBy =
+            sort === 'checkin_asc'
+                ? { checkin: 'asc' }
+                : { createdAt: 'desc' };
+
+        const [rows, total] = await Promise.all([
+            prisma.booking.findMany({
+                where,
+                skip: pagination.skip,
+                take: pagination.take,
+                orderBy,
+                include: {
+                    property: {
+                        select: {
+                            propertyName: true,
+                            location: true,
+                            images: true,
+                            owner: {
+                                select: {
+                                    id: true,
+                                    email: true,
+                                    firstName: true,
+                                    lastName: true,
+                                },
+                            },
+                        },
+                    },
+                    payment: true,
+                },
+            }),
+            prisma.booking.count({ where }),
+        ]);
+
+        res.json({
+            success: true,
+            ...formatPaginatedResponse(
+                rows.map((b) => formatBookingRow(b, { includeOwnerNotes: true })),
+                total,
+                pagination.page,
+                pagination.limit,
+            ),
+        });
+    } catch (error) {
+        console.error('Get admin bookings error:', error);
+        res.status(500).json({ success: false, message: 'Failed to fetch bookings.' });
+    }
+};
+
+/**
  * GET /bookings/my
  */
 const getGuestBookings = async (req, res) => {
@@ -767,6 +826,7 @@ module.exports = {
     checkAvailability,
     createBooking,
     getOwnerBookings,
+    getAdminBookings,
     getGuestBookings,
     getBookingById,
     confirmBooking,

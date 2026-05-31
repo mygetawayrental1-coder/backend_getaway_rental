@@ -2,10 +2,12 @@ const express = require('express');
 const router = express.Router();
 const bookingController = require('../controllers/booking.controller');
 const { authenticate, optionalAuth } = require('../middleware/auth');
+const { requireAdmin } = require('../middleware/roles');
 
 router.post('/check-availability', optionalAuth, bookingController.checkAvailability);
 router.post('/create', optionalAuth, bookingController.createBooking);
 
+router.get('/admin/all', authenticate, requireAdmin, bookingController.getAdminBookings);
 router.get('/owner/orders', authenticate, bookingController.getOwnerBookings);
 router.get('/my', authenticate, bookingController.getGuestBookings);
 

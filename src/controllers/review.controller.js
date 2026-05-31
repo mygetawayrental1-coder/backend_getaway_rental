@@ -216,10 +216,41 @@ const getMyPropertyReviews = async (req, res) => {
     }
 };
 
+/**
+ * GET /reviews/approved
+ */
+const getApprovedReviews = async (req, res) => {
+    try {
+        const { page, limit, skip } = getPagination(req.query);
+
+        const where = { isApproved: true };
+
+        const [reviews, total] = await Promise.all([
+            prisma.review.findMany({
+                where,
+                include: reviewInclude,
+                orderBy: { createdAt: 'desc' },
+                skip,
+                take: limit,
+            }),
+            prisma.review.count({ where }),
+        ]);
+
+        res.json({
+            success: true,
+            ...formatPaginatedResponse(reviews, total, page, limit),
+        });
+    } catch (error) {
+        console.error('Get approved reviews error:', error);
+        res.status(500).json({ success: false, message: 'Failed to fetch approved reviews.' });
+    }
+};
+
 module.exports = {
     replyToReview,
     approveReview,
     rejectReview,
     getAllReviewsForModeration,
+    getApprovedReviews,
     getMyPropertyReviews,
 };

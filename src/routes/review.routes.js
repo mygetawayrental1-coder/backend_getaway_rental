@@ -11,6 +11,12 @@ router.get(
     reviewController.getAllReviewsForModeration,
 );
 router.get(
+    '/approved',
+    authenticate,
+    requireAdmin,
+    reviewController.getApprovedReviews,
+);
+router.get(
     '/my-properties',
     authenticate,
     requireOwner,
