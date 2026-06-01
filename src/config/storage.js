@@ -88,16 +88,28 @@ const deleteLocalFile = async (filePath) => {
     }
 };
 
-// Get public URL for a file
+// Get public URL for a file (relativePath is under uploadDir, e.g. general/uuid.jpg)
 const getFileUrl = (req, relativePath) => {
     const baseUrl = process.env.APP_URL || `http://localhost:${process.env.PORT || 5000}`;
-    return `${baseUrl}/uploads/${relativePath}`;
+    const key = String(relativePath || '').replace(/\\/g, '/').replace(/^\/+/, '');
+    return `${baseUrl.replace(/\/$/, '')}/uploads/${key}`;
 };
+
+/** Public path stored in DB — includes subfolder (e.g. /uploads/general/uuid.png). */
+function multerFileToPublicPath(file) {
+    if (!file?.path) {
+        return `/uploads/${file.filename}`;
+    }
+    const root = path.resolve(uploadDir);
+    const rel = path.relative(root, path.resolve(file.path)).replace(/\\/g, '/');
+    return `/uploads/${rel}`;
+}
 
 module.exports = {
     upload,
     deleteLocalFile,
     getFileUrl,
+    multerFileToPublicPath,
     uploadDir,
     sanitizeUploadSubfolder,
 };

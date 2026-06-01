@@ -54,7 +54,7 @@ function extendImages(imagesJson, minCount = 6) {
 
 async function upsertPlan(plan) {
     const existing = await prisma.subscriptionPlan.findFirst({
-        where: { name: plan.name },
+        where: { name: plan.name, duration: plan.duration },
     });
     if (existing) {
         await prisma.subscriptionPlan.update({
@@ -192,6 +192,33 @@ async function main() {
             duration: 'Monthly',
             maxProperties: 20,
             features: JSON.stringify(['Up to 20 listings', 'Full analytics dashboard', '24/7 support', 'Multiple featured badges', 'Custom pricing requests']),
+            status: 'Active',
+        },
+        {
+            name: 'Starter',
+            price: 99.99,
+            specialPrice: 89.99,
+            duration: 'Yearly',
+            maxProperties: 1,
+            features: JSON.stringify(['1 property listing', 'Basic analytics', 'Email support', 'Billed annually']),
+            status: 'Active',
+        },
+        {
+            name: 'Professional',
+            price: 239.99,
+            specialPrice: 199.99,
+            duration: 'Yearly',
+            maxProperties: 5,
+            features: JSON.stringify(['Up to 5 listings', 'Advanced analytics', 'Priority support', 'Featured listing badge', 'Billed annually']),
+            status: 'Active',
+        },
+        {
+            name: 'Business',
+            price: 479.99,
+            specialPrice: 399.99,
+            duration: 'Yearly',
+            maxProperties: 20,
+            features: JSON.stringify(['Up to 20 listings', 'Full analytics dashboard', '24/7 support', 'Multiple featured badges', 'Billed annually']),
             status: 'Active',
         },
         {

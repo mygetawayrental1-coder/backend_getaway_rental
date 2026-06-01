@@ -1,4 +1,5 @@
 const prisma = require('../config/database');
+const { multerFileToPublicPath } = require('../config/storage');
 const { verifyCaptcha } = require('./captcha.controller');
 const {
     stringifyJsonField,
@@ -294,7 +295,7 @@ const createProperty = async (req, res) => {
         // Extract image URLs from req.files (added by uploadMultiple middleware)
         let images = [];
         if (req.files && req.files.length > 0) {
-            images = req.files.map(file => `/uploads/${file.filename}`);
+            images = req.files.map(multerFileToPublicPath);
         } else if (req.body.images) {
             const parsed = parseBodyJsonArray(req.body.images);
             images = parsed ?? (Array.isArray(req.body.images) ? req.body.images : [req.body.images]);
@@ -662,7 +663,7 @@ const updateProperty = async (req, res) => {
 
         let newImages = [];
         if (req.files && req.files.length > 0) {
-            newImages = req.files.map(file => `/uploads/${file.filename}`);
+            newImages = req.files.map(multerFileToPublicPath);
         }
 
         // Combine them if any exist, otherwise omit the field

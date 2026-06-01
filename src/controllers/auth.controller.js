@@ -166,7 +166,8 @@ const editProfile = async (req, res) => {
         if (phoneNumber !== undefined) updateData.phoneNumber = phoneNumber;
         if (address !== undefined) updateData.address = address;
         if (req.file) {
-            updateData.profilePic = `/uploads/${req.file.filename}`;
+            const { multerFileToPublicPath } = require('../config/storage');
+            updateData.profilePic = multerFileToPublicPath(req.file);
         } else if (profilePic !== undefined) {
             updateData.profilePic = profilePic;
         }
