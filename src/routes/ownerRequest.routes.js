@@ -4,6 +4,9 @@ const ownerRequestController = require('../controllers/ownerRequest.controller')
 const { authenticate } = require('../middleware/auth');
 const { isAdmin } = require('../middleware/roles');
 
+// Create become-a-host / owner onboarding request
+router.post('/', authenticate, ownerRequestController.createBecomeOwnerRequest);
+
 // Create custom pricing request
 router.post('/custom-pricing', authenticate, ownerRequestController.createCustomPricingRequest);
 

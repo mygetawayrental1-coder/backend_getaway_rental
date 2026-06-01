@@ -12,6 +12,7 @@ const NOTIFICATION_TYPES = {
     PAYOUT_PROCESSED: 'payout_processed',
     PAYOUT_REQUEST_NEW: 'payout_request_new',
     INQUIRY_NEW: 'inquiry_new',
+    GUEST_REQUEST_NEW: 'guest_request_new',
     SUBSCRIPTION_EXPIRING: 'subscription_expiring',
     MESSAGE_NEW: 'message_new',
     SUPPORT_TICKET_NEW: 'support_ticket_new',
@@ -78,6 +79,13 @@ function buildNotificationContent(type, vars = {}) {
             return {
                 title: 'New inquiry',
                 body: `New inquiry for ${propertyName}`,
+            };
+        case NOTIFICATION_TYPES.GUEST_REQUEST_NEW:
+            return {
+                title: 'New rent request',
+                body: vars.guestName
+                    ? `${vars.guestName} requested to rent ${propertyName}`
+                    : `New rent request for ${propertyName}`,
             };
         case NOTIFICATION_TYPES.SUBSCRIPTION_EXPIRING:
             return {

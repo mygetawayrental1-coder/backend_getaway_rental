@@ -23,11 +23,11 @@ router.post('/plans', authenticate, isAdmin, subscriptionController.createPlan);
 router.put('/plans/:id', authenticate, isAdmin, subscriptionController.updatePlan);
 router.delete('/plans/:id', authenticate, isAdmin, subscriptionController.deletePlan);
 
-// Owner routes - subscription management
-router.post('/', authenticate, requireRole(ROLES.OWNER), subscriptionController.subscribe);
-router.post('/subscribe', authenticate, requireRole(ROLES.OWNER), subscriptionController.subscribe);
-router.get('/my', authenticate, requireRole(ROLES.OWNER), subscriptionController.getMySubscription);
-router.get('/my-subscription', authenticate, requireRole(ROLES.OWNER), subscriptionController.getMySubscription);
-router.post('/cancel', authenticate, requireRole(ROLES.OWNER), subscriptionController.cancelSubscription);
+// Owner routes - subscription management (ADMIN can subscribe for testing)
+router.post('/', authenticate, requireRole(ROLES.OWNER, ROLES.ADMIN), subscriptionController.subscribe);
+router.post('/subscribe', authenticate, requireRole(ROLES.OWNER, ROLES.ADMIN), subscriptionController.subscribe);
+router.get('/my', authenticate, requireRole(ROLES.OWNER, ROLES.ADMIN), subscriptionController.getMySubscription);
+router.get('/my-subscription', authenticate, requireRole(ROLES.OWNER, ROLES.ADMIN), subscriptionController.getMySubscription);
+router.post('/cancel', authenticate, requireRole(ROLES.OWNER, ROLES.ADMIN), subscriptionController.cancelSubscription);
 
 module.exports = router;

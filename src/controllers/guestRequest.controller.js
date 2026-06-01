@@ -1,26 +1,56 @@
 const prisma = require('../config/database');
 const { getPagination, formatPaginatedResponse } = require('../utils/helpers');
-const { sendGuestRequestNotification } = require('../services/email.service');
+const {
+    sendGuestRequestNotification,
+    sendGuestRequestConfirmationToGuest,
+    sendGuestRequestAcceptedToGuest,
+    sendGuestRequestRejectedToGuest,
+} = require('../services/email.service');
+const {
+    createTypedNotification,
+    NOTIFICATION_TYPES,
+} = require('../services/notification.service');
+
+function emailPayload(request, property) {
+    return {
+        propertyName: property.propertyName,
+        fullName: request.fullName,
+        email: request.email,
+        phone: request.phone,
+        checkin: request.checkin,
+        checkout: request.checkout,
+        guests: request.guests,
+        message: request.message,
+        ownerPhone: property.owner?.phoneNumber
+            ? `${property.owner.countryCode || ''} ${property.owner.phoneNumber}`.trim()
+            : null,
+    };
+}
 
 // Create guest request (PUBLIC - no auth required)
 const createGuestRequest = async (req, res) => {
     try {
-        const { propertyId, fullName, email, phone, message, checkin, checkout, guests } = req.body;
+        const { propertyId, fullName, email, phone, message, checkin, checkout, guests } =
+            req.body;
 
-        // Validate required fields
         if (!propertyId || !fullName || !email) {
             return res.status(400).json({
                 success: false,
-                message: 'Property ID, full name, and email are required.',
+                message: 'Property, full name, and email are required.',
             });
         }
 
-        // Check if property exists
         const property = await prisma.property.findFirst({
             where: { OR: [{ id: propertyId }, { propertyId }] },
             include: {
                 owner: {
-                    select: { id: true, email: true, firstName: true },
+                    select: {
+                        id: true,
+                        email: true,
+                        firstName: true,
+                        phoneNumber: true,
+                        countryCode: true,
+                    },
                 },
             },
         });
@@ -32,7 +62,6 @@ const createGuestRequest = async (req, res) => {
             });
         }
 
-        // Create the guest request
         const guestRequest = await prisma.guestRequest.create({
             data: {
                 propertyId: property.id,
@@ -43,6 +72,7 @@ const createGuestRequest = async (req, res) => {
                 checkin: checkin ? new Date(checkin) : null,
                 checkout: checkout ? new Date(checkout) : null,
                 guests: guests || 1,
+                status: 'NEW',
             },
             include: {
                 property: {
@@ -51,26 +81,45 @@ const createGuestRequest = async (req, res) => {
             },
         });
 
-        // Send notification email to property owner
-        try {
-            await sendGuestRequestNotification(property.owner.email, {
-                propertyName: property.propertyName,
-                fullName,
-                email,
-                phone,
-                checkin,
-                checkout,
-                guests,
-                message,
-            });
-            console.log(`Email notification sent to owner: ${property.owner.email}`);
-        } catch (emailError) {
-            console.error('Failed to send guest request notification:', emailError);
-        }
+        const mailData = emailPayload(guestRequest, property);
+
+        // Respond immediately; emails/notifications run in the background (avoids SMTP timeouts blocking the client).
+        void (async () => {
+            try {
+                await sendGuestRequestNotification(property.owner.email, mailData);
+            } catch (emailError) {
+                console.error('Owner email failed:', emailError.message);
+            }
+
+            try {
+                await sendGuestRequestConfirmationToGuest(email, mailData);
+            } catch (emailError) {
+                console.error('Guest confirmation email failed:', emailError.message);
+            }
+
+            try {
+                await createTypedNotification({
+                    userId: property.owner.id,
+                    type: NOTIFICATION_TYPES.GUEST_REQUEST_NEW,
+                    data: {
+                        guestRequestId: guestRequest.id,
+                        propertyId: property.id,
+                        propertyName: property.propertyName,
+                    },
+                    vars: {
+                        propertyName: property.propertyName,
+                        guestName: fullName,
+                    },
+                });
+            } catch (notifyErr) {
+                console.error('Owner dashboard notification failed:', notifyErr.message);
+            }
+        })();
 
         res.status(201).json({
             success: true,
-            message: 'Your request has been submitted successfully. The property owner will contact you soon.',
+            message:
+                'Your request was submitted. Check your email for confirmation — the owner will respond soon.',
             data: guestRequest,
         });
     } catch (error) {
@@ -82,20 +131,18 @@ const createGuestRequest = async (req, res) => {
     }
 };
 
-// Get guest requests for a property owner (AUTH required)
 const getOwnerGuestRequests = async (req, res) => {
     try {
         const userId = req.user.id;
         const { page, limit, status, propertyId } = req.query;
         const pagination = getPagination(page, limit);
 
-        // Get owner's properties first
         const ownerProperties = await prisma.property.findMany({
             where: { ownerId: userId },
             select: { id: true },
         });
 
-        const propertyIds = ownerProperties.map(p => p.id);
+        const propertyIds = ownerProperties.map((p) => p.id);
 
         if (propertyIds.length === 0) {
             return res.json({
@@ -106,7 +153,6 @@ const getOwnerGuestRequests = async (req, res) => {
             });
         }
 
-        // Build where clause
         const where = {
             propertyId: { in: propertyIds },
         };
@@ -147,7 +193,6 @@ const getOwnerGuestRequests = async (req, res) => {
     }
 };
 
-// Get single guest request (AUTH required)
 const getGuestRequestById = async (req, res) => {
     try {
         const { id } = req.params;
@@ -173,7 +218,6 @@ const getGuestRequestById = async (req, res) => {
             });
         }
 
-        // Check authorization (must be property owner or admin)
         if (req.user.role !== 'ADMIN' && request.property.owner.id !== userId) {
             return res.status(403).json({
                 success: false,
@@ -194,14 +238,20 @@ const getGuestRequestById = async (req, res) => {
     }
 };
 
-// Update guest request status (AUTH required - owner only)
 const updateGuestRequestStatus = async (req, res) => {
     try {
         const { id } = req.params;
         const { status } = req.body;
         const userId = req.user.id;
 
-        const validStatuses = ['NEW', 'VIEWED', 'CONTACTED', 'CLOSED'];
+        const validStatuses = [
+            'NEW',
+            'VIEWED',
+            'CONTACTED',
+            'ACCEPTED',
+            'REJECTED',
+            'CLOSED',
+        ];
         if (!validStatuses.includes(status)) {
             return res.status(400).json({
                 success: false,
@@ -209,12 +259,12 @@ const updateGuestRequestStatus = async (req, res) => {
             });
         }
 
-        // Find the request
         const request = await prisma.guestRequest.findUnique({
             where: { id },
             include: {
                 property: {
-                    include: {
+                    select: {
+                        propertyName: true,
                         owner: { select: { id: true } },
                     },
                 },
@@ -228,7 +278,6 @@ const updateGuestRequestStatus = async (req, res) => {
             });
         }
 
-        // Check authorization
         if (req.user.role !== 'ADMIN' && request.property.owner.id !== userId) {
             return res.status(403).json({
                 success: false,
@@ -236,11 +285,38 @@ const updateGuestRequestStatus = async (req, res) => {
             });
         }
 
-        // Update status
+        const previousStatus = request.status;
         const updated = await prisma.guestRequest.update({
             where: { id },
             data: { status },
         });
+
+        const mailData = {
+            propertyName: request.property.propertyName,
+            fullName: request.fullName,
+            email: request.email,
+            phone: request.phone,
+            checkin: request.checkin,
+            checkout: request.checkout,
+            guests: request.guests,
+            message: request.message,
+        };
+
+        if (status === 'ACCEPTED' && previousStatus !== 'ACCEPTED') {
+            try {
+                await sendGuestRequestAcceptedToGuest(request.email, mailData);
+            } catch (emailError) {
+                console.error('Acceptance email failed:', emailError.message);
+            }
+        }
+
+        if (status === 'REJECTED' && previousStatus !== 'REJECTED') {
+            try {
+                await sendGuestRequestRejectedToGuest(request.email, mailData);
+            } catch (emailError) {
+                console.error('Rejection email failed:', emailError.message);
+            }
+        }
 
         res.json({
             success: true,
@@ -256,13 +332,11 @@ const updateGuestRequestStatus = async (req, res) => {
     }
 };
 
-// Delete guest request (AUTH required - owner or admin only)
 const deleteGuestRequest = async (req, res) => {
     try {
         const { id } = req.params;
         const userId = req.user.id;
 
-        // Find the request
         const request = await prisma.guestRequest.findUnique({
             where: { id },
             include: {
@@ -281,7 +355,6 @@ const deleteGuestRequest = async (req, res) => {
             });
         }
 
-        // Check authorization
         if (req.user.role !== 'ADMIN' && request.property.owner.id !== userId) {
             return res.status(403).json({
                 success: false,

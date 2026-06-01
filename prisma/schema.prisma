@@ -210,7 +210,7 @@ model GuestRequest {
   checkout DateTime?
   guests   Int       @default(1)
 
-  status String @default("NEW") // NEW | VIEWED | CONTACTED | CLOSED
+  status String @default("NEW") // NEW | VIEWED | CONTACTED | ACCEPTED | REJECTED | CLOSED
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

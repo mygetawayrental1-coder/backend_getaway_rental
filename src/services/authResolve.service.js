@@ -1,5 +1,23 @@
 const prisma = require('../config/database');
-const { verifyToken: verifyClerkJwt } = require('@clerk/backend');
+const { createClerkClient, verifyToken: verifyClerkJwt } = require('@clerk/backend');
+const { syncUser } = require('../controllers/auth.controller');
+
+/** Map Clerk Backend API user → webhook-style payload for syncUser. */
+function clerkApiUserToSyncPayload(user) {
+    const emailAddresses = (user.emailAddresses || []).map((e) => ({
+        id: e.id,
+        email_address: e.emailAddress,
+    }));
+
+    return {
+        id: user.id,
+        first_name: user.firstName || '',
+        last_name: user.lastName || '',
+        image_url: user.imageUrl || null,
+        primary_email_address_id: user.primaryEmailAddressId,
+        email_addresses: emailAddresses,
+    };
+}
 
 const userSelect = {
     id: true,
@@ -39,13 +57,40 @@ async function getUserFromBearerToken(token) {
         const clerkId = payload?.sub;
         if (!clerkId) return null;
 
-        const user = await prisma.user.findUnique({
+        let user = await prisma.user.findUnique({
             where: { clerkId },
             select: userSelect,
         });
 
+        if (!user) {
+            try {
+                const clerk = createClerkClient({
+                    secretKey: process.env.CLERK_SECRET_KEY,
+                });
+                const clerkUser = await clerk.users.getUser(clerkId);
+                await syncUser(clerkApiUserToSyncPayload(clerkUser));
+                user = await prisma.user.findUnique({
+                    where: { clerkId },
+                    select: userSelect,
+                });
+            } catch (provisionErr) {
+                console.error(
+                    '[auth] Could not provision user from Clerk:',
+                    provisionErr.message,
+                );
+            }
+        }
+
         if (user && user.isActive === false) {
             return null;
+        }
+
+        // Legacy END_USER accounts are property owners — normalize role in API + DB.
+        if (user && user.role === 'END_USER') {
+            prisma.user
+                .update({ where: { id: user.id }, data: { role: 'OWNER' } })
+                .catch((err) => console.warn('[auth] END_USER→OWNER upgrade failed:', err.message));
+            return { ...user, role: 'OWNER' };
         }
 
         return user;

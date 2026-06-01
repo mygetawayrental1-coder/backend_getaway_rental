@@ -15,6 +15,7 @@ const authController = require('../controllers/auth.controller');
 const { authenticate } = require('../middleware/auth');
 const { upload } = require('../config/storage');
 
+router.post('/sync', authenticate, authController.syncMe);
 router.get('/me', authenticate, authController.getMe);
 router.put('/edit-profile', authenticate, upload.single('profilePic'), authController.editProfile);
 

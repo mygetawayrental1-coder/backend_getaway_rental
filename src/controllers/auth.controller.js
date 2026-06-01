@@ -1,4 +1,5 @@
 const prisma = require('../config/database');
+const { getSubscriptionSummary } = require('../services/subscriptionAccess.service');
 
 function primaryEmailFromClerk(data) {
     if (!data?.email_addresses?.length) return null;
@@ -32,17 +33,25 @@ const syncUser = async (clerkData) => {
 
     const byClerk = await prisma.user.findUnique({ where: { clerkId } });
     if (byClerk) {
+        const rolePatch =
+            byClerk.role === 'END_USER' || byClerk.role === 'OWNER'
+                ? { role: 'OWNER' }
+                : {};
         return prisma.user.update({
             where: { clerkId },
-            data: profile,
+            data: { ...profile, ...rolePatch },
         });
     }
 
     const byEmail = await prisma.user.findUnique({ where: { email } });
     if (byEmail) {
+        const rolePatch =
+            byEmail.role === 'END_USER' || byEmail.role === 'OWNER'
+                ? { role: 'OWNER' }
+                : {};
         return prisma.user.update({
             where: { email },
-            data: { ...profile, clerkId },
+            data: { ...profile, clerkId, ...rolePatch },
         });
     }
 
@@ -50,7 +59,7 @@ const syncUser = async (clerkData) => {
         data: {
             clerkId,
             ...profile,
-            role: 'END_USER',
+            role: 'OWNER',
         },
     });
 };
@@ -62,6 +71,33 @@ const deactivateUserByClerkId = async (clerkId) => {
         where: { clerkId },
         data: { isActive: false },
     });
+};
+
+/** Ensure Prisma user exists for the Clerk account in the Bearer token. */
+const syncMe = async (req, res) => {
+    try {
+        const user = await prisma.user.findUnique({
+            where: { id: req.user.id },
+            select: {
+                id: true,
+                email: true,
+                firstName: true,
+                lastName: true,
+                role: true,
+            },
+        });
+
+        res.json({
+            success: true,
+            data: user,
+        });
+    } catch (error) {
+        console.error('Sync me error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to sync profile.',
+        });
+    }
 };
 
 const getMe = async (req, res) => {
@@ -85,9 +121,15 @@ const getMe = async (req, res) => {
             },
         });
 
+        const subscription = await getSubscriptionSummary(user.id);
+
         res.json({
             success: true,
-            data: user,
+            data: {
+                ...user,
+                role: user.role === 'END_USER' ? 'OWNER' : user.role,
+                ...subscription,
+            },
         });
     } catch (error) {
         console.error('Get me error:', error);
@@ -163,6 +205,7 @@ const editProfile = async (req, res) => {
 module.exports = {
     syncUser,
     deactivateUserByClerkId,
+    syncMe,
     getMe,
     editProfile,
 };

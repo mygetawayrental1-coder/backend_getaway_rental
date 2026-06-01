@@ -212,6 +212,10 @@ const subscribe = async (req, res) => {
             endDate.setFullYear(endDate.getFullYear() + 1);
         }
 
+        // Payment gateway not wired yet — activate immediately so owners can list properties.
+        const activateNow = process.env.SUBSCRIPTION_REQUIRE_PAYMENT !== 'true';
+        const subscriptionStatus = activateNow ? 'ACTIVE' : 'PENDING';
+
         const subscription = await prisma.$transaction(async (tx) => {
             const existingSubscription = await tx.userSubscription.findFirst({
                 where: {
@@ -236,7 +240,7 @@ const subscribe = async (req, res) => {
                     couponId: resolvedCouponId,
                     startDate,
                     endDate,
-                    status: 'PENDING',
+                    status: subscriptionStatus,
                 },
                 include: {
                     plan: true,
@@ -259,7 +263,9 @@ const subscribe = async (req, res) => {
 
         res.status(201).json({
             success: true,
-            message: 'Subscription created. Please complete payment.',
+            message: activateNow
+                ? 'Subscription activated. You can add listings from your dashboard.'
+                : 'Subscription created. Please complete payment.',
             data: subscription,
         });
     } catch (error) {

@@ -2,6 +2,7 @@ const prisma = require('../../config/database');
 const {
     formatPropertyResponse,
     formatPropertiesResponse,
+    buildLocationFilter,
     getPagination,
 } = require('../../utils/helpers');
 
@@ -64,6 +65,7 @@ exports.searchProperties = async (req, res) => {
             page,
             limit,
             bedrooms,
+            min_rating,
         } = req.query;
 
         const pagination = getPagination(page, limit);
@@ -75,14 +77,8 @@ exports.searchProperties = async (req, res) => {
         const andConditions = [];
 
         if (location_name) {
-            const term = String(location_name).trim();
-            andConditions.push({
-                OR: [
-                    { location: { contains: term, mode: 'insensitive' } },
-                    { state: { contains: term, mode: 'insensitive' } },
-                    { country: { contains: term, mode: 'insensitive' } },
-                ],
-            });
+            const locationFilter = buildLocationFilter(location_name);
+            if (locationFilter) andConditions.push(locationFilter);
         }
 
         if (rental_type) {
@@ -157,6 +153,33 @@ exports.searchProperties = async (req, res) => {
 
         if (excludeIds.length) {
             where.id = { notIn: excludeIds };
+        }
+
+        const minR = min_rating ? parseFloat(String(min_rating)) : null;
+        if (minR !== null && !Number.isNaN(minR) && minR > 0) {
+            const grouped = await prisma.review.groupBy({
+                by: ['propertyId'],
+                where: { isApproved: true },
+                _avg: { overallRating: true },
+            });
+            const ratingIds = grouped
+                .filter((g) => g._avg.overallRating != null && g._avg.overallRating >= minR)
+                .map((g) => g.propertyId);
+
+            if (!ratingIds.length) {
+                return res.json({
+                    success: true,
+                    properties: [],
+                    total: 0,
+                    page: pagination.page,
+                    totalPages: 0,
+                });
+            }
+
+            where.id = {
+                ...(where.id || {}),
+                in: ratingIds,
+            };
         }
 
         const orderBy = buildOrder(sort);

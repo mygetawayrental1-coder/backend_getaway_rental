@@ -22,6 +22,7 @@ const formatPropertyResponse = (property) => {
         ...property,
         additionalCharges: parseJsonField(property.additionalCharges),
         amenities: parseJsonField(property.amenities),
+        suitability: parseJsonField(property.suitability),
         images: parseJsonField(property.images),
         icalUrls: parseJsonField(property.icalUrls),
     };
@@ -40,6 +41,41 @@ const calculateNights = (checkin, checkout) => {
     const diffTime = Math.abs(end - start);
     return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 };
+
+/** Prisma `where` fragment for location_name search (city, state, or country). */
+function buildLocationFilter(term) {
+    const raw = String(term).trim();
+    if (!raw) return null;
+
+    const lower = raw.toLowerCase();
+    const isUnitedStates = [
+        'united states',
+        'united states of america',
+        'usa',
+        'u.s.a.',
+        'u.s.',
+        'us',
+        'america',
+    ].includes(lower);
+
+    if (isUnitedStates) {
+        return {
+            OR: [
+                { country: { equals: 'USA', mode: 'insensitive' } },
+                { country: { equals: 'US', mode: 'insensitive' } },
+                { country: { contains: 'United States', mode: 'insensitive' } },
+            ],
+        };
+    }
+
+    return {
+        OR: [
+            { location: { contains: raw, mode: 'insensitive' } },
+            { state: { contains: raw, mode: 'insensitive' } },
+            { country: { contains: raw, mode: 'insensitive' } },
+        ],
+    };
+}
 
 // Pagination helper
 const getPagination = (page = 1, limit = 10) => {
@@ -69,6 +105,7 @@ module.exports = {
     formatPropertyResponse,
     formatPropertiesResponse,
     calculateNights,
+    buildLocationFilter,
     getPagination,
     formatPaginatedResponse,
 };

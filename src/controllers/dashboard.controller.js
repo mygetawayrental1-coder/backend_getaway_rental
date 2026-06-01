@@ -185,6 +185,9 @@ async function getOwnerStats(ownerId) {
         totalInquiries,
         pendingInquiries,
         acceptedInquiries,
+        totalGuestRequests,
+        pendingGuestRequests,
+        acceptedGuestRequests,
         reviewAgg,
         pendingPayoutAgg,
         totalPaidAgg,
@@ -215,6 +218,15 @@ async function getOwnerStats(ownerId) {
         prisma.inquiry.count({ where: inquiryWhere }),
         prisma.inquiry.count({ where: { ...inquiryWhere, status: 'PENDING' } }),
         prisma.inquiry.count({ where: { ...inquiryWhere, status: 'ACCEPTED' } }),
+        prisma.guestRequest.count({
+            where: { property: propertyWhere },
+        }),
+        prisma.guestRequest.count({
+            where: { property: propertyWhere, status: 'NEW' },
+        }),
+        prisma.guestRequest.count({
+            where: { property: propertyWhere, status: 'ACCEPTED' },
+        }),
         prisma.review.aggregate({
             where: reviewWhere,
             _count: { id: true },
@@ -262,6 +274,11 @@ async function getOwnerStats(ownerId) {
             total: totalInquiries,
             pending: pendingInquiries,
             accepted: acceptedInquiries,
+        },
+        guestRequests: {
+            total: totalGuestRequests,
+            pending: pendingGuestRequests,
+            accepted: acceptedGuestRequests,
         },
         reviews: {
             total: reviewAgg._count.id,
@@ -318,10 +335,8 @@ const getStats = async (req, res) => {
 
         if (role === 'ADMIN') {
             data = await getAdminStats();
-        } else if (role === 'OWNER') {
-            data = await getOwnerStats(userId);
         } else {
-            data = await getEndUserStats(req.user);
+            data = await getOwnerStats(userId);
         }
 
         res.json({ success: true, data });

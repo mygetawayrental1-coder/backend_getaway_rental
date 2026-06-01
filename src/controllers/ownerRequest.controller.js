@@ -77,6 +77,78 @@ const createCustomPricingRequest = async (req, res) => {
     }
 };
 
+// Create become-a-host application (web onboarding)
+const createBecomeOwnerRequest = async (req, res) => {
+    try {
+        const { type, message, phone, numProperties } = req.body;
+        const userId = req.user.id;
+
+        if (type && type !== 'BECOME_OWNER') {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid request type.',
+            });
+        }
+
+        if (req.user.role === 'OWNER' || req.user.role === 'ADMIN') {
+            return res.status(400).json({
+                success: false,
+                message: 'You already have owner access.',
+            });
+        }
+
+        const num = parseInt(numProperties, 10);
+        if (!num || Number.isNaN(num) || num < 1) {
+            return res.status(400).json({
+                success: false,
+                message: 'Number of properties is required.',
+            });
+        }
+
+        if (!phone || !String(phone).trim()) {
+            return res.status(400).json({
+                success: false,
+                message: 'Phone number is required.',
+            });
+        }
+
+        const existing = await prisma.ownerRequest.findFirst({
+            where: { userId, type: 'BECOME_OWNER', status: 'PENDING' },
+        });
+
+        if (existing) {
+            return res.status(409).json({
+                success: false,
+                message: 'You already have a pending owner application.',
+            });
+        }
+
+        const newRequest = await prisma.ownerRequest.create({
+            data: {
+                userId,
+                type: 'BECOME_OWNER',
+                requestedPrice: 0,
+                numProperties: num,
+                message: message?.trim() || null,
+                phone: String(phone).trim(),
+                status: 'PENDING',
+            },
+        });
+
+        res.status(201).json({
+            success: true,
+            message: 'Your owner application has been submitted. We will review it shortly.',
+            data: newRequest,
+        });
+    } catch (error) {
+        console.error('Create become owner request error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to submit application.',
+        });
+    }
+};
+
 // Get my requests (Owner)
 const getMyRequests = async (req, res) => {
     try {
@@ -155,6 +227,7 @@ const updateRequestStatus = async (req, res) => {
 
 module.exports = {
     createCustomPricingRequest,
+    createBecomeOwnerRequest,
     getAllRequests,
     getMyRequests,
     updateRequestStatus

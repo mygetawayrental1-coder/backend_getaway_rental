@@ -19,7 +19,7 @@ exports.getHostProfile = async (req, res) => {
         });
 
         if (!user || user.role === 'END_USER') {
-            return res.status(404).json({ success: false, message: 'Host not found.' });
+            return res.status(404).json({ success: false, message: 'Owner not found.' });
         }
 
         const properties = await prisma.property.findMany({
@@ -51,7 +51,7 @@ exports.getHostProfile = async (req, res) => {
         });
     } catch (error) {
         console.error('[web/hosts]', error);
-        res.status(500).json({ success: false, message: 'Failed to load host.' });
+        res.status(500).json({ success: false, message: 'Failed to load owner.' });
     }
 };
 
@@ -68,7 +68,7 @@ exports.getHostReviews = async (req, res) => {
         });
 
         if (!user || user.role === 'END_USER') {
-            return res.status(404).json({ success: false, message: 'Host not found.' });
+            return res.status(404).json({ success: false, message: 'Owner not found.' });
         }
 
         const where = {
@@ -102,6 +102,6 @@ exports.getHostReviews = async (req, res) => {
         });
     } catch (error) {
         console.error('[web/hosts] reviews', error);
-        res.status(500).json({ success: false, message: 'Failed to fetch host reviews.' });
+        res.status(500).json({ success: false, message: 'Failed to fetch owner reviews.' });
     }
 };

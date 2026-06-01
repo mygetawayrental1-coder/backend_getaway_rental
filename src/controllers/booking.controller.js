@@ -396,7 +396,7 @@ const createBooking = async (req, res) => {
 
         res.status(201).json({
             success: true,
-            message: 'Booking request submitted. The host will confirm shortly.',
+            message: 'Booking request submitted. The owner will confirm shortly.',
             data: formatBookingRow({ ...booking, payment: null }),
         });
     } catch (error) {

@@ -23,6 +23,35 @@ function suitability(overrides = {}) {
     });
 }
 
+function reviewOverall(sleep, location, service, clean, rooms) {
+    return Math.round(((sleep + location + service + clean + rooms) / 5) * 10) / 10;
+}
+
+const GALLERY_EXTRAS = [
+    'https://images.unsplash.com/photo-1512917774080-9991f1c4c750?w=800',
+    'https://images.unsplash.com/photo-1600607687939-ce8a6c25118c?w=800',
+    'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?w=800',
+    'https://images.unsplash.com/photo-1600566753190-17f0baa2a6c3?w=800',
+    'https://images.unsplash.com/photo-1600573472592-401b28945bf9?w=800',
+    'https://images.unsplash.com/photo-1560448204-e02f11c3d0e2?w=800',
+];
+
+function extendImages(imagesJson, minCount = 6) {
+    let imgs = [];
+    try {
+        imgs = JSON.parse(imagesJson || '[]');
+    } catch {
+        imgs = [];
+    }
+    if (imgs.length >= minCount) return JSON.stringify(imgs);
+    const merged = [...imgs];
+    for (const url of GALLERY_EXTRAS) {
+        if (merged.length >= minCount) break;
+        if (!merged.includes(url)) merged.push(url);
+    }
+    return JSON.stringify(merged);
+}
+
 async function upsertPlan(plan) {
     const existing = await prisma.subscriptionPlan.findFirst({
         where: { name: plan.name },
@@ -150,6 +179,7 @@ async function main() {
         {
             name: 'Professional',
             price: 24.99,
+            specialPrice: 19.99,
             duration: 'Monthly',
             maxProperties: 5,
             features: JSON.stringify(['Up to 5 listings', 'Advanced analytics', 'Priority support', 'Featured listing badge']),
@@ -158,9 +188,19 @@ async function main() {
         {
             name: 'Business',
             price: 49.99,
+            specialPrice: 39.99,
             duration: 'Monthly',
             maxProperties: 20,
             features: JSON.stringify(['Up to 20 listings', 'Full analytics dashboard', '24/7 support', 'Multiple featured badges', 'Custom pricing requests']),
+            status: 'Active',
+        },
+        {
+            name: 'Annual Pro',
+            price: 249.99,
+            specialPrice: 199.99,
+            duration: 'Yearly',
+            maxProperties: 10,
+            features: JSON.stringify(['Up to 10 listings', '2 months free vs monthly', 'Priority support', 'Featured badge', 'Annual billing discount']),
             status: 'Active',
         },
     ];
@@ -270,7 +310,7 @@ async function main() {
             suitability: DEFAULT_SUITABILITY,
             about: 'Rustic cabin with lake views and private dock access.',
             policyAndHouseRules: 'No parties, Check-in after 3 PM',
-            images: JSON.stringify(['https://images.unsplash.com/photo-1449158743715-0a90ebb6d2d8?w=800', 'https://images.unsplash.com/photo-1518780664699-ffc087ae005e?w=800']),
+            images: JSON.stringify(['https://images.unsplash.com/photo-1449158743715-0a90ebb6d2d8?w=800', 'https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=800']),
             status: 'Active', ownerId: owners[1].id,
         },
         {
@@ -378,7 +418,7 @@ async function main() {
             suitability: DEFAULT_SUITABILITY,
             about: 'Desert retreat surrounded by red rock formations and hiking trails.',
             policyAndHouseRules: 'No smoking, Quiet retreat — no parties',
-            images: JSON.stringify(['https://images.unsplash.com/photo-1518780664699-ffc087ae005e?w=800', 'https://images.unsplash.com/photo-1449158743715-0a90ebb6d2d8?w=800']),
+            images: JSON.stringify(['https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=800', 'https://images.unsplash.com/photo-1449158743715-0a90ebb6d2d8?w=800']),
             status: 'Active', ownerId: owners[2].id,
         },
         {
@@ -452,6 +492,17 @@ async function main() {
         });
         createdProperties.push(property);
         console.log('Created property:', property.propertyName);
+    }
+
+    console.log('\n--- Extending property galleries ---');
+    for (const property of createdProperties.filter((p) => p.status === 'Active')) {
+        const images = extendImages(property.images, 6);
+        if (images !== property.images) {
+            await prisma.property.update({
+                where: { id: property.id },
+                data: { images },
+            });
+        }
     }
 
     // ============================================
@@ -535,7 +586,7 @@ async function main() {
         { name: 'San Francisco', slug: 'san-francisco', parentSlug: 'california', image: 'https://images.unsplash.com/photo-1506146332389-18140dc7b2fb?w=800', sortOrder: 5 },
         { name: 'Nevada', slug: 'nevada', parentSlug: 'united-states', image: 'https://images.unsplash.com/photo-1605833556294-ea5c7a74f57d?w=800', sortOrder: 6 },
         { name: 'New Jersey', slug: 'new-jersey', parentSlug: 'united-states', image: 'https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=800', sortOrder: 7 },
-        { name: 'Virginia', slug: 'virginia', parentSlug: 'united-states', image: 'https://images.unsplash.com/photo-1599030290346-2d56f2b5b534?w=800', sortOrder: 8 },
+        { name: 'Virginia', slug: 'virginia', parentSlug: 'united-states', image: 'https://images.unsplash.com/photo-1449158743715-0a90ebb6d2d8?w=800', sortOrder: 8 },
         { name: 'Virginia Beach', slug: 'virginia-beach', parentSlug: 'virginia', image: 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=800', sortOrder: 9 },
     ];
 
@@ -553,64 +604,413 @@ async function main() {
     // ============================================
     console.log('\n--- Seeding blog posts ---');
 
+    await prisma.blogPost.deleteMany({});
+
+    const blogExcerpt =
+        'Discover how the right vacation rental transforms your trip—from cliffside villas with ocean views to cozy cabins steps from the trail. We cover what to book, when to visit, and how to make the most of every day. Pack light, plan ahead, and enjoy every moment of your stay. You can [...]';
+
     const blogSeeds = [
         {
-            slug: 'discover-hidden-beaches-us',
-            title: 'Discover Hidden Beaches Across the US',
-            excerpt: 'Uncover serene coastal escapes beyond the tourist crowds.',
-            content: '<p>From the rugged Oregon coast to Florida\'s Gulf Keys, America offers unforgettable shoreline escapes. Pack light, respect local wildlife, and travel during shoulder seasons for quieter sands.</p>',
-            category: 'Beauty beaches',
-            thumbnailUrl: 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=800',
+            slug: 'pure-luxe-in-punta-mita',
+            title: 'Pure Luxe in Punta Mita',
+            excerpt: blogExcerpt,
+            content:
+                '<p>Punta Mita blends Pacific sunsets with polished resort living. Book a villa with a private plunge pool and easy beach access for a week that feels effortlessly upscale.</p><p>Reserve early for holiday weeks and ask hosts about chef services or golf shuttles before you arrive.</p>',
+            category: 'Parks and Carnivals',
+            thumbnailUrl: 'https://images.unsplash.com/photo-1512917774080-9991f1c4c750?auto=format&fit=crop&w=900&q=80',
             authorName: 'Travel Desk',
             readTimeMin: 6,
-            tags: JSON.stringify(['travel', 'beaches', 'US']),
+            tags: JSON.stringify(['luxury', 'mexico', 'beach']),
             isPublished: true,
+            publishedAt: new Date('2018-11-30'),
         },
         {
-            slug: 'national-parks-weekend-itineraries',
-            title: 'National Parks: Weekend Itineraries',
-            excerpt: 'Short trips that maximize trails, vistas, and wildlife.',
-            content: '<p>Whether you choose Yosemite, Zion, or the Smokies, plan sunrise hikes and book lodging early. Carry plenty of water and check seasonal road closures.</p>',
-            category: 'National parks',
-            thumbnailUrl: 'https://images.unsplash.com/photo-1469474968028-56623f02e42e?w=800',
-            authorName: 'Trail Notes',
-            readTimeMin: 8,
-            tags: JSON.stringify(['national parks', 'hiking', 'weekend']),
+            slug: 'all-aboard-the-rocky-mountaineer',
+            title: 'All Aboard the Rocky Mountaineer',
+            excerpt: blogExcerpt,
+            content:
+                '<p>Pair a rail journey through the Canadian Rockies with a spacious vacation home base in Banff or Jasper. Look for rentals with mountain views and parking for day-trip gear.</p><p>Shoulder seasons offer quieter trails and better nightly rates on whole-home stays.</p>',
+            category: 'Beauty Beaches',
+            thumbnailUrl: 'https://images.unsplash.com/photo-1564013799919-ab600027ffc6?auto=format&fit=crop&w=900&q=80',
+            authorName: 'Rail & Roam',
+            readTimeMin: 7,
+            tags: JSON.stringify(['trains', 'mountains', 'canada']),
             isPublished: true,
+            publishedAt: new Date('2018-11-30'),
         },
         {
-            slug: 'cultural-events-calendar',
-            title: 'Cultural Events Worth Planning Around',
-            excerpt: 'Festivals and museums that define each destination.',
-            content: '<p>Align your rental dates with local art walks, music festivals, and food weeks. Many cities publish annual calendars—bookmark them when choosing dates.</p>',
-            category: 'Cultural events',
-            thumbnailUrl: 'https://images.unsplash.com/photo-1533174072545-7a4b6ad7a6c3?w=800',
+            slug: 'castle-on-the-cliff-majestic-magic-manoir',
+            title: 'The Castle on the Cliff: Majestic, Magic, Manoir',
+            excerpt: blogExcerpt,
+            content:
+                '<p>Historic manors and cliffside estates make unforgettable rental backdrops. Confirm heating, stair access, and parking before booking multi-level properties.</p><p>Evening light on stone facades is worth planning around—bring a camera and comfortable shoes for cobblestone lanes.</p>',
+            category: 'National Parks',
+            thumbnailUrl: 'https://images.unsplash.com/photo-1539656898715-266653ba6363?auto=format&fit=crop&w=900&q=80',
+            authorName: 'Heritage Stays',
+            readTimeMin: 5,
+            tags: JSON.stringify(['castle', 'europe', 'history']),
+            isPublished: true,
+            publishedAt: new Date('2018-11-30'),
+        },
+        {
+            slug: 'miami-carnival-weekend-rentals',
+            title: 'Miami Carnival Weekend: Where to Stay',
+            excerpt: blogExcerpt,
+            content:
+                '<p>Festival weekends fill hotels fast—whole-home rentals give your group room to spread out after parades and late-night music. Filter for parking and a quiet bedroom away from the street.</p><p>Book three to six months ahead for peak carnival dates and confirm noise policies with your host.</p>',
+            category: 'Parks and Carnivals',
+            thumbnailUrl: 'https://images.unsplash.com/photo-1533174072545-7a4b6ad7a6c3?auto=format&fit=crop&w=900&q=80',
             authorName: 'City Guides',
             readTimeMin: 5,
-            tags: JSON.stringify(['culture', 'festivals', 'events']),
+            tags: JSON.stringify(['miami', 'festival', 'events']),
             isPublished: true,
+            publishedAt: new Date('2019-03-15'),
         },
         {
-            slug: 'mountain-cabin-checklist',
-            title: 'Mountain Cabin Getaways: What to Pack',
-            excerpt: 'Layers, traction, and booking tips for alpine stays.',
-            content: '<p>Elevation changes temperatures fast—bring layers and traction devices in winter. Confirm driveway access and snow removal with your host.</p>',
-            category: 'Mountains',
-            thumbnailUrl: 'https://images.unsplash.com/photo-1518780664699-ffc087ae005e?w=800',
-            authorName: 'Alpine Tips',
-            readTimeMin: 4,
-            tags: JSON.stringify(['mountains', 'cabins', 'packing']),
+            slug: 'florida-gulf-hidden-beaches',
+            title: 'Florida Gulf: Hidden Beaches & Beach Houses',
+            excerpt: blogExcerpt,
+            content:
+                '<p>Skip the busiest strips and target quiet Gulf towns with walkable sand and family-friendly rentals. Screened porches and outdoor showers matter after long beach days.</p><p>Travel in May or September for warm water and thinner crowds.</p>',
+            category: 'Beauty Beaches',
+            thumbnailUrl: 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=900&q=80',
+            authorName: 'Coastal Notes',
+            readTimeMin: 6,
+            tags: JSON.stringify(['florida', 'beach', 'family']),
             isPublished: true,
+            publishedAt: new Date('2019-06-22'),
+        },
+        {
+            slug: 'yosemite-weekend-itinerary',
+            title: 'Yosemite in a Weekend: Trails & Cabins',
+            excerpt: blogExcerpt,
+            content:
+                '<p>Base yourself in a cabin near the park entrance to beat morning gate lines. Pack layers, reserve timed entries when required, and plan one signature hike plus one scenic drive.</p><p>Whole-home kitchens help early starts—stock up before you arrive in the valley.</p>',
+            category: 'National Parks',
+            thumbnailUrl: 'https://images.unsplash.com/photo-1469474968028-56623f02e42e?auto=format&fit=crop&w=900&q=80',
+            authorName: 'Trail Notes',
+            readTimeMin: 8,
+            tags: JSON.stringify(['yosemite', 'hiking', 'national parks']),
+            isPublished: true,
+            publishedAt: new Date('2020-08-10'),
+        },
+        {
+            slug: 'aspen-ski-season-chalet-guide',
+            title: 'Aspen Ski Season: Chalet Booking Tips',
+            excerpt: blogExcerpt,
+            content:
+                '<p>Ski-in chalets go early for Christmas and Presidents\' Day. Compare shuttle access if you are not slope-side, and confirm hot tub maintenance with the host.</p><p>Split costs with friends—a four-bedroom rental often beats multiple hotel rooms.</p>',
+            category: 'Parks and Carnivals',
+            thumbnailUrl: 'https://images.unsplash.com/photo-1510798832041-6fd7d9f24209?auto=format&fit=crop&w=900&q=80',
+            authorName: 'Alpine Tips',
+            readTimeMin: 6,
+            tags: JSON.stringify(['ski', 'aspen', 'winter']),
+            isPublished: true,
+            publishedAt: new Date('2021-01-08'),
+        },
+        {
+            slug: 'lake-house-summer-checklist',
+            title: 'Lake House Summers: The Complete Checklist',
+            excerpt: blogExcerpt,
+            content:
+                '<p>Dock access, kayak storage, and bug screens separate great lake rentals from average ones. Ask about boat slips, fire pit rules, and nearest grocery runs before booking.</p><p>Week-long stays often unlock discounts—plan around Fourth of July early.</p>',
+            category: 'Beauty Beaches',
+            thumbnailUrl: 'https://images.unsplash.com/photo-1600596542815-ffad4c1539a9?auto=format&fit=crop&w=900&q=80',
+            authorName: 'Lakeside Living',
+            readTimeMin: 5,
+            tags: JSON.stringify(['lake', 'summer', 'checklist']),
+            isPublished: true,
+            publishedAt: new Date('2022-07-04'),
+        },
+        {
+            slug: 'zion-desert-villa-escape',
+            title: 'Zion & Desert Villas: Red Rock Retreats',
+            excerpt: blogExcerpt,
+            content:
+                '<p>Desert villas near Zion offer pools, stargazing, and day trips into the canyon. Carry extra water for hikes and book sunrise slots for Angel\'s Landing when permits apply.</p><p>Spring and fall deliver the best hiking weather and softer light for photography.</p>',
+            category: 'National Parks',
+            thumbnailUrl: 'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&w=900&q=80',
+            authorName: 'Desert Routes',
+            readTimeMin: 7,
+            tags: JSON.stringify(['zion', 'desert', 'utah']),
+            isPublished: true,
+            publishedAt: new Date('2023-04-18'),
         },
     ];
 
     for (const post of blogSeeds) {
-        await prisma.blogPost.upsert({
-            where: { slug: post.slug },
-            update: post,
-            create: post,
-        });
+        await prisma.blogPost.create({ data: post });
         console.log('Created blog post:', post.slug);
+    }
+
+    // ============================================
+    // 8. COUPONS
+    // ============================================
+    console.log('\n--- Seeding coupons ---');
+
+    const couponSeeds = [
+        {
+            code: 'WELCOME10',
+            discountType: 'PERCENT',
+            discountValue: 10,
+            maxUses: 100,
+            isActive: true,
+            planId: null,
+        },
+        {
+            code: 'PRO20',
+            discountType: 'PERCENT',
+            discountValue: 20,
+            maxUses: 50,
+            isActive: true,
+            planId: planIds.Professional,
+        },
+    ];
+
+    for (const coupon of couponSeeds) {
+        await prisma.coupon.upsert({
+            where: { code: coupon.code },
+            update: coupon,
+            create: coupon,
+        });
+        console.log('Created coupon:', coupon.code);
+    }
+
+    // ============================================
+    // 9. REVIEWS
+    // ============================================
+    console.log('\n--- Seeding reviews ---');
+
+    const reviewTargets = createdProperties.filter((p) => p.status === 'Active').slice(0, 10);
+    const existingReviews = await prisma.review.count();
+
+    if (existingReviews === 0) {
+        const reviewTexts = [
+            'Absolutely stunning property. The photos do not do it justice—we will definitely return.',
+            'Clean, well-equipped, and the host was responsive within minutes. Great location too.',
+            'Perfect for our family trip. Kids loved the pool and we appreciated the clear house rules.',
+            'Smooth check-in and comfortable beds. Would recommend to anyone visiting the area.',
+            'Beautiful views and thoughtful touches throughout. Minor Wi-Fi hiccup but host fixed it fast.',
+        ];
+
+        for (let pi = 0; pi < reviewTargets.length; pi++) {
+            const property = reviewTargets[pi];
+            const numReviews = 2 + (pi % 3);
+            for (let ri = 0; ri < numReviews; ri++) {
+                const sleep = 4 + ((pi + ri) % 2);
+                const location = 4 + (pi % 2);
+                const service = 5 - (ri % 2);
+                const clean = 4 + ((pi + 1) % 2);
+                const rooms = 4 + (ri % 2);
+                const author = endUsers[(pi + ri) % endUsers.length];
+
+                await prisma.review.create({
+                    data: {
+                        propertyId: property.id,
+                        authorId: author.id,
+                        authorName: `${author.firstName} ${author.lastName}`,
+                        authorEmail: author.email,
+                        sleepRating: sleep,
+                        locationRating: location,
+                        serviceRating: service,
+                        clearnessRating: clean,
+                        roomsRating: rooms,
+                        overallRating: reviewOverall(sleep, location, service, clean, rooms),
+                        text: reviewTexts[(pi + ri) % reviewTexts.length],
+                        isApproved: true,
+                    },
+                });
+            }
+            console.log('Created reviews for:', property.propertyName);
+        }
+    } else {
+        console.log('Skipped reviews (already seeded)');
+    }
+
+    // ============================================
+    // 10. BOOKINGS
+    // ============================================
+    console.log('\n--- Seeding bookings ---');
+
+    const existingBookings = await prisma.booking.count();
+    if (existingBookings === 0) {
+        const now = new Date();
+        const bookingSeeds = [
+            {
+                property: createdProperties[0],
+                guest: endUsers[0],
+                guestName: 'Jane Smith',
+                guestEmail: endUsers[0].email,
+                checkin: new Date(now.getFullYear(), now.getMonth(), now.getDate() + 14),
+                checkout: new Date(now.getFullYear(), now.getMonth(), now.getDate() + 18),
+                guests: 4,
+                status: 'PENDING',
+            },
+            {
+                property: createdProperties[0],
+                guest: endUsers[1],
+                guestName: 'Chris Taylor',
+                guestEmail: endUsers[1].email,
+                checkin: new Date(now.getFullYear(), now.getMonth(), now.getDate() + 5),
+                checkout: new Date(now.getFullYear(), now.getMonth(), now.getDate() + 8),
+                guests: 2,
+                status: 'CONFIRMED',
+            },
+            {
+                property: createdProperties[1],
+                guest: endUsers[2],
+                guestName: 'Sarah Wilson',
+                guestEmail: endUsers[2].email,
+                checkin: new Date(now.getFullYear(), now.getMonth() - 1, 10),
+                checkout: new Date(now.getFullYear(), now.getMonth() - 1, 14),
+                guests: 3,
+                status: 'COMPLETED',
+            },
+            {
+                property: createdProperties[1],
+                guest: endUsers[3],
+                guestName: 'David Brown',
+                guestEmail: endUsers[3].email,
+                checkin: new Date(now.getFullYear(), now.getMonth(), now.getDate() + 21),
+                checkout: new Date(now.getFullYear(), now.getMonth(), now.getDate() + 24),
+                guests: 2,
+                status: 'PENDING',
+            },
+            {
+                property: createdProperties[6],
+                guest: endUsers[0],
+                guestName: 'Jane Smith',
+                guestEmail: endUsers[0].email,
+                guestClerkId: endUsers[0].id,
+                checkin: new Date(now.getFullYear(), now.getMonth() + 1, 3),
+                checkout: new Date(now.getFullYear(), now.getMonth() + 1, 6),
+                guests: 2,
+                status: 'CONFIRMED',
+            },
+            {
+                property: createdProperties[2],
+                guest: endUsers[4],
+                guestName: 'Jessica Martinez',
+                guestEmail: endUsers[4].email,
+                checkin: new Date(now.getFullYear(), now.getMonth() - 1, 20),
+                checkout: new Date(now.getFullYear(), now.getMonth() - 1, 25),
+                guests: 4,
+                status: 'COMPLETED',
+            },
+        ];
+
+        for (let i = 0; i < bookingSeeds.length; i++) {
+            const b = bookingSeeds[i];
+            const nights = Math.ceil((b.checkout - b.checkin) / 86400000);
+            const totalAmount = b.property.nightlyRate * nights;
+
+            const booking = await prisma.booking.create({
+                data: {
+                    bookingId: `BK-SEED-${String(i + 1).padStart(4, '0')}`,
+                    propertyId: b.property.id,
+                    guestName: b.guestName,
+                    guestEmail: b.guestEmail,
+                    guestPhone: '5550000000',
+                    guestClerkId: b.guestClerkId || null,
+                    checkin: b.checkin,
+                    checkout: b.checkout,
+                    guests: b.guests,
+                    nights,
+                    nightlyRate: b.property.nightlyRate,
+                    weekendRate: b.property.weekendRate,
+                    totalAmount,
+                    status: b.status,
+                    confirmedAt: ['CONFIRMED', 'ONGOING', 'COMPLETED'].includes(b.status) ? new Date() : null,
+                    completedAt: b.status === 'COMPLETED' ? new Date() : null,
+                },
+            });
+
+            if (b.status === 'COMPLETED') {
+                await prisma.bookingPayment.create({
+                    data: {
+                        bookingId: booking.id,
+                        amount: totalAmount,
+                        currency: 'USD',
+                        status: 'PAID',
+                        paymentMethod: 'paypal',
+                        paidAt: b.checkout,
+                    },
+                });
+            }
+
+            console.log('Created booking:', booking.bookingId, b.status);
+        }
+    } else {
+        console.log('Skipped bookings (already seeded)');
+    }
+
+    // ============================================
+    // 11. WISHLIST
+    // ============================================
+    console.log('\n--- Seeding wishlists ---');
+
+    const existingWishlist = await prisma.wishlist.count();
+    if (existingWishlist === 0) {
+        const wishlistPairs = [
+            [endUsers[0].id, createdProperties[0].id],
+            [endUsers[0].id, createdProperties[1].id],
+            [endUsers[0].id, createdProperties[6].id],
+            [endUsers[1].id, createdProperties[2].id],
+            [endUsers[2].id, createdProperties[3].id],
+            [endUsers[2].id, createdProperties[9].id],
+        ];
+        for (const [userId, propertyId] of wishlistPairs) {
+            await prisma.wishlist.create({ data: { userId, propertyId } });
+        }
+        console.log('Created wishlist entries:', wishlistPairs.length);
+    } else {
+        console.log('Skipped wishlist (already seeded)');
+    }
+
+    // ============================================
+    // 12. NOTIFICATIONS
+    // ============================================
+    console.log('\n--- Seeding notifications ---');
+
+    const existingNotifs = await prisma.notification.count();
+    if (existingNotifs === 0) {
+        await prisma.notification.createMany({
+            data: [
+                {
+                    userId: owners[0].id,
+                    type: 'booking_pending',
+                    title: 'New booking request',
+                    body: 'Jane Smith requested dates at Oceanfront Villa Miami.',
+                    isRead: false,
+                },
+                {
+                    userId: owners[0].id,
+                    type: 'inquiry_new',
+                    title: 'New guest inquiry',
+                    body: 'You have a new message about Oceanfront Villa Miami.',
+                    isRead: true,
+                    readAt: new Date(),
+                },
+                {
+                    userId: endUsers[0].id,
+                    type: 'booking_confirmed',
+                    title: 'Booking confirmed',
+                    body: 'Your stay at Malibu Beach House is confirmed.',
+                    isRead: false,
+                },
+                {
+                    userId: endUsers[0].id,
+                    type: 'review_new',
+                    title: 'Thanks for your review',
+                    body: 'Your review was submitted and is pending approval.',
+                    isRead: true,
+                    readAt: new Date(),
+                },
+            ],
+        });
+        console.log('Created sample notifications');
+    } else {
+        console.log('Skipped notifications (already seeded)');
     }
 
     console.log('\nDatabase seeding completed.');
@@ -618,11 +1018,10 @@ async function main() {
     console.log('Production users are created via Clerk webhooks.');
     console.log('\nSummary:');
     console.log('  - 1 admin, 4 owners, 5 end users');
-    console.log('  - 3 subscription plans (Starter, Professional, Business)');
-    console.log('  - 22 properties');
-    console.log('  - 8 inquiries (on fresh DB)');
-    console.log('  - 4 owner subscriptions (on fresh DB)');
-    console.log('  - 9 locations, 4 blog posts');
+    console.log('  - 4 subscription plans + coupons (WELCOME10, PRO20)');
+    console.log('  - 22 properties (galleries extended to 6 photos on active listings)');
+    console.log('  - 8 inquiries, reviews, bookings, wishlist, notifications (on fresh DB)');
+    console.log('  - 9 locations, 9 blog posts');
 }
 
 main().catch(console.error).finally(() => prisma.$disconnect());

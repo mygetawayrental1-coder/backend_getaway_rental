@@ -202,12 +202,16 @@ const getAllOwners = async (req, res) => {
         const { page, limit, search } = req.query;
         const pagination = getPagination(page, limit);
 
-        const where = { role: 'OWNER' };
+        const where = { role: { not: 'ADMIN' } };
         if (search) {
-            where.OR = [
-                { email: { contains: search } },
-                { firstName: { contains: search } },
-                { lastName: { contains: search } },
+            where.AND = [
+                {
+                    OR: [
+                        { email: { contains: search, mode: 'insensitive' } },
+                        { firstName: { contains: search, mode: 'insensitive' } },
+                        { lastName: { contains: search, mode: 'insensitive' } },
+                    ],
+                },
             ];
         }
 
@@ -226,18 +230,47 @@ const getAllOwners = async (req, res) => {
                     phoneNumber: true,
                     address: true,
                     profilePic: true,
+                    role: true,
                     createdAt: true,
                     _count: {
                         select: { properties: true },
+                    },
+                    subscriptions: {
+                        where: {
+                            status: 'ACTIVE',
+                            endDate: { gt: new Date() },
+                        },
+                        take: 1,
+                        orderBy: { endDate: 'desc' },
+                        include: {
+                            plan: { select: { id: true, name: true, maxProperties: true } },
+                        },
                     },
                 },
             }),
             prisma.user.count({ where }),
         ]);
 
+        const data = owners.map((o) => {
+            const activeSub = o.subscriptions?.[0] || null;
+            const { subscriptions, ...rest } = o;
+            return {
+                ...rest,
+                role: rest.role === 'END_USER' ? 'OWNER' : rest.role,
+                subscription: activeSub
+                    ? {
+                          planName: activeSub.plan.name,
+                          maxProperties: activeSub.plan.maxProperties,
+                          endDate: activeSub.endDate,
+                      }
+                    : null,
+                canListProperties: Boolean(activeSub),
+            };
+        });
+
         res.json({
             success: true,
-            ...formatPaginatedResponse(owners, total, pagination.page, pagination.limit),
+            ...formatPaginatedResponse(data, total, pagination.page, pagination.limit),
         });
     } catch (error) {
         console.error('Get all owners error:', error);

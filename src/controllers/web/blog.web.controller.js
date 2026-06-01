@@ -1,6 +1,14 @@
 const prisma = require('../../config/database');
 const { parseJsonField } = require('../../utils/helpers');
 
+function slugify(text) {
+    return String(text)
+        .toLowerCase()
+        .trim()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '');
+}
+
 function formatBlogPost(post) {
     return {
         ...post,
@@ -58,18 +66,48 @@ exports.getBySlug = async (req, res) => {
 
 exports.createPost = async (req, res) => {
     try {
-        const { slug, title, excerpt, content, category, thumbnailUrl, authorName, isPublished, tags, readTimeMin } = req.body;
+        const {
+            slug: rawSlug,
+            title,
+            excerpt,
+            content,
+            category,
+            thumbnailUrl,
+            authorName,
+            isPublished,
+            tags,
+            readTimeMin,
+        } = req.body;
+
+        if (!title?.trim() || !excerpt?.trim() || !content?.trim() || !category?.trim() || !thumbnailUrl?.trim()) {
+            return res.status(400).json({
+                success: false,
+                message: 'Title, excerpt, content, category, and thumbnail URL are required.',
+            });
+        }
+
+        const slug = rawSlug?.trim() || slugify(title);
+        if (!slug) {
+            return res.status(400).json({ success: false, message: 'A valid slug is required.' });
+        }
+
+        const existingSlug = await prisma.blogPost.findUnique({ where: { slug } });
+        if (existingSlug) {
+            return res.status(409).json({ success: false, message: 'A post with this slug already exists.' });
+        }
+
+        const published = Boolean(isPublished);
 
         const post = await prisma.blogPost.create({
             data: {
                 slug,
-                title,
-                excerpt,
+                title: title.trim(),
+                excerpt: excerpt.trim(),
                 content,
-                category,
-                thumbnailUrl,
-                authorName: authorName || `${req.user.firstName} ${req.user.lastName}`.trim(),
-                isPublished: Boolean(isPublished),
+                category: category.trim(),
+                thumbnailUrl: thumbnailUrl.trim(),
+                authorName: authorName?.trim() || `${req.user.firstName} ${req.user.lastName}`.trim(),
+                isPublished: published,
                 publishedAt: new Date(),
                 tags: tags ? JSON.stringify(tags) : null,
                 readTimeMin: readTimeMin != null ? parseInt(readTimeMin, 10) : null,
@@ -107,6 +145,16 @@ exports.updatePost = async (req, res) => {
         }
 
         const data = {};
+        if (body.slug !== undefined) {
+            const nextSlug = String(body.slug).trim();
+            if (nextSlug && nextSlug !== existing.slug) {
+                const slugTaken = await prisma.blogPost.findUnique({ where: { slug: nextSlug } });
+                if (slugTaken) {
+                    return res.status(409).json({ success: false, message: 'A post with this slug already exists.' });
+                }
+                data.slug = nextSlug;
+            }
+        }
         if (body.title !== undefined) data.title = body.title;
         if (body.excerpt !== undefined) data.excerpt = body.excerpt;
         if (body.content !== undefined) data.content = body.content;
@@ -135,5 +183,23 @@ exports.updatePost = async (req, res) => {
     } catch (error) {
         console.error('[web/blog] update', error);
         res.status(500).json({ success: false, message: 'Failed to update post.' });
+    }
+};
+
+exports.deletePost = async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        const existing = await prisma.blogPost.findUnique({ where: { id } });
+        if (!existing) {
+            return res.status(404).json({ success: false, message: 'Post not found.' });
+        }
+
+        await prisma.blogPost.delete({ where: { id } });
+
+        res.json({ success: true, message: 'Post deleted.' });
+    } catch (error) {
+        console.error('[web/blog] delete', error);
+        res.status(500).json({ success: false, message: 'Failed to delete post.' });
     }
 };

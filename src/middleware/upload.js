@@ -3,11 +3,11 @@ const { upload } = require('../config/storage');
 // Single file upload middleware
 const uploadSingle = upload.single('file');
 
-// Multiple files upload middleware (max 10)
+// Multiple files upload middleware (max 50 per field)
 // Accept both `files` and `images` keys for compatibility across clients.
 const uploadMultipleBase = upload.fields([
-    { name: 'files', maxCount: 10 },
-    { name: 'images', maxCount: 10 },
+    { name: 'files', maxCount: 50 },
+    { name: 'images', maxCount: 50 },
 ]);
 
 const uploadMultiple = (req, res, next) => {
@@ -29,6 +29,12 @@ const handleUploadError = (err, req, res, next) => {
             return res.status(400).json({
                 success: false,
                 message: 'File size exceeds 10MB limit.',
+            });
+        }
+        if (err.code === 'LIMIT_FILE_COUNT' || err.code === 'LIMIT_UNEXPECTED_FILE') {
+            return res.status(400).json({
+                success: false,
+                message: 'Too many files in one upload (max 50 per request).',
             });
         }
         if (err.message === 'Only image files are allowed!') {

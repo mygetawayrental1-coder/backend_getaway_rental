@@ -10,19 +10,36 @@ const {
 
 const BLOCKING_BOOKING_STATUSES = ['CONFIRMED', 'ONGOING'];
 
+/** Parse JSON array fields sent as strings via multipart FormData. */
+function parseBodyJsonArray(value) {
+    if (value == null || value === '') return null;
+    if (Array.isArray(value)) return value;
+    if (typeof value === 'string') {
+        try {
+            const parsed = JSON.parse(value);
+            if (Array.isArray(parsed)) return parsed;
+        } catch {
+            return null;
+        }
+    }
+    return null;
+}
+
 function startOfDay(value) {
     const d = new Date(value);
     if (Number.isNaN(d.getTime())) return null;
-    d.setHours(0, 0, 0, 0);
-    return d;
+    // Normalize to UTC midnight. The `date` column is `@db.Date`, which stores
+    // only the calendar date in UTC, so we must build the day from UTC parts to
+    // avoid an off-by-one shift in timezones ahead of UTC (e.g. IST).
+    return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
 }
 
 function formatDateOnly(value) {
     const d = startOfDay(value);
     if (!d) return null;
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
+    const y = d.getUTCFullYear();
+    const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(d.getUTCDate()).padStart(2, '0');
     return `${y}-${m}-${day}`;
 }
 
@@ -221,6 +238,8 @@ const clearAvailability = async (req, res) => {
     }
 };
 
+const { assertCanCreateListing } = require('../services/subscriptionAccess.service');
+
 // Create property
 const createProperty = async (req, res) => {
     try {
@@ -277,8 +296,25 @@ const createProperty = async (req, res) => {
         if (req.files && req.files.length > 0) {
             images = req.files.map(file => `/uploads/${file.filename}`);
         } else if (req.body.images) {
-            // Fallback if images were sent as a raw string or array (e.g. from postman)
-            images = Array.isArray(req.body.images) ? req.body.images : [req.body.images];
+            const parsed = parseBodyJsonArray(req.body.images);
+            images = parsed ?? (Array.isArray(req.body.images) ? req.body.images : [req.body.images]);
+        }
+
+        if (images.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'Upload at least one photo.',
+            });
+        }
+
+        const amenitiesList = parseBodyJsonArray(amenities) ?? amenities;
+
+        const listingAccess = await assertCanCreateListing(req.user.id);
+        if (!listingAccess.allowed && req.user.role !== 'ADMIN') {
+            return res.status(listingAccess.status).json({
+                success: false,
+                message: listingAccess.message,
+            });
         }
 
         // Get owner ID from authenticated user or email
@@ -319,7 +355,7 @@ const createProperty = async (req, res) => {
                 weeklyRate: parseInt(weeklyRate) || 0,
                 monthlyRate: parseInt(monthlyRate) || 0,
                 additionalCharges: stringifyJsonField(additionalCharges),
-                amenities: stringifyJsonField(amenities),
+                amenities: stringifyJsonField(amenitiesList),
                 about,
                 policyAndHouseRules,
                 images: stringifyJsonField(images),
@@ -370,8 +406,8 @@ const getAllProperties = async (req, res) => {
             ];
         }
 
-        // Filter by owner if the authenticated user is an OWNER
-        if (req.user && req.user.role === 'OWNER') {
+        // Owners only see their own listings; admins see all (admin portal / moderation).
+        if (req.user && req.user.role !== 'ADMIN') {
             where.ownerId = req.user.id;
         }
 
@@ -470,6 +506,50 @@ const getPropertyById = async (req, res) => {
     }
 };
 
+/** Owner dashboard — only the signed-in user's properties. */
+const getMyProperties = async (req, res) => {
+    try {
+        const { page, limit, status, search } = req.query;
+        const pagination = getPagination(page, limit);
+
+        const where = { ownerId: req.user.id };
+        if (status) where.status = status;
+        if (search) {
+            where.OR = [
+                { propertyName: { contains: search } },
+                { location: { contains: search } },
+                { about: { contains: search } },
+            ];
+        }
+
+        const [properties, total] = await Promise.all([
+            prisma.property.findMany({
+                where,
+                skip: pagination.skip,
+                take: pagination.take,
+                orderBy: { createdAt: 'desc' },
+            }),
+            prisma.property.count({ where }),
+        ]);
+
+        res.json({
+            success: true,
+            ...formatPaginatedResponse(
+                formatPropertiesResponse(properties),
+                total,
+                pagination.page,
+                pagination.limit,
+            ),
+        });
+    } catch (error) {
+        console.error('Get my properties error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to fetch your properties.',
+        });
+    }
+};
+
 // Get properties by owner email
 const getPropertiesByEmail = async (req, res) => {
     try {
@@ -559,7 +639,10 @@ const updateProperty = async (req, res) => {
             if (updateData[field] !== undefined) data[field] = Boolean(updateData[field]);
         });
         jsonFields.forEach(field => {
-            if (updateData[field] !== undefined) data[field] = stringifyJsonField(updateData[field]);
+            if (updateData[field] !== undefined) {
+                const parsed = parseBodyJsonArray(updateData[field]);
+                data[field] = stringifyJsonField(parsed ?? updateData[field]);
+            }
         });
         dateFields.forEach(field => {
             if (updateData[field] !== undefined) data[field] = updateData[field] ? new Date(updateData[field]) : null;
@@ -567,9 +650,9 @@ const updateProperty = async (req, res) => {
 
         // Handle image updates
         let existingImages = [];
-        if (updateData.images) {
-            // If the client sends back existing image URLs to keep
-            existingImages = Array.isArray(updateData.images) ? updateData.images : [updateData.images];
+        if (updateData.images !== undefined) {
+            const parsed = parseBodyJsonArray(updateData.images);
+            existingImages = parsed ?? (Array.isArray(updateData.images) ? updateData.images : [updateData.images]);
         } else if (property.images) {
             try {
                 // If nothing was passed, preserve existing ones (or client can pass empty array to clear)
@@ -722,6 +805,7 @@ const getLocationSuggestions = async (req, res) => {
 module.exports = {
     createProperty,
     getAllProperties,
+    getMyProperties,
     getPropertyById,
     getPropertiesByEmail,
     updateProperty,

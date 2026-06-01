@@ -1,21 +1,33 @@
 const nodemailer = require('nodemailer');
 
-// Ensure native SMTP configuration with Brevo Relay parameters
+const brevoConfigured = Boolean(process.env.BREVO_SMTP_USER && process.env.BREVO_SMTP_PASS);
+
+if (!brevoConfigured) {
+  console.warn(
+    '[email] BREVO_SMTP_USER and BREVO_SMTP_PASS must be set in .env — outbound email is disabled.',
+  );
+}
+
 const transporter = nodemailer.createTransport({
-  host: 'smtp-relay.brevo.com',
-  port: 587,
-  secure: false, // true for 465, false for other ports
-  auth: {
-    user: process.env.BREVO_SMTP_USER || 'a46cd0001@smtp-brevo.com',
-    pass: process.env.BREVO_SMTP_PASS || 'xsmtpsib-REDACTED', // Provided SMTP Key
-  },
+  host: process.env.BREVO_SMTP_HOST || 'smtp-relay.brevo.com',
+  port: Number(process.env.BREVO_SMTP_PORT) || 587,
+  secure: false,
+  auth: brevoConfigured
+    ? {
+        user: process.env.BREVO_SMTP_USER,
+        pass: process.env.BREVO_SMTP_PASS,
+      }
+    : undefined,
 });
 
-const FROM_EMAIL = process.env.BREVO_FROM_EMAIL || 'mdkabir3350@gmail.com';
-const FROM_NAME = process.env.BREVO_FROM_NAME || 'MyGatewayRental';
+const FROM_EMAIL = process.env.BREVO_FROM_EMAIL || 'noreply@example.com';
+const FROM_NAME = process.env.BREVO_FROM_NAME || 'MyGetawayRental';
 
 // Generic Send email wrapper
 const sendEmail = async ({ to, subject, html, text }) => {
+  if (!brevoConfigured) {
+    throw new Error('Brevo SMTP is not configured.');
+  }
   try {
     const mailOptions = {
       from: `"${FROM_NAME}" <${FROM_EMAIL}>`, // sender address
@@ -184,31 +196,112 @@ const sendInquiryNotification = async (ownerEmail, inquiry) => {
   });
 };
 
-// Send guest request notification to owner
+function formatRequestDate(value) {
+  if (!value) return 'Flexible';
+  try {
+    return new Date(value).toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+    });
+  } catch {
+    return String(value);
+  }
+}
+
+// Notify owner by email (guest rent request)
 const sendGuestRequestNotification = async (ownerEmail, request) => {
+  const ownerPhone = request.ownerPhone || 'Not on file';
+  const guestPhone = request.phone || 'Not provided';
+
   const html = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-      <h2 style="color: #10B981;">New Guest Request!</h2>
-      <p>You have received a new contact request from a guest for your property.</p>
+      <h2 style="color: #ED8323;">New rent request</h2>
+      <p>A guest submitted a rental request for your property. Details are below — you can also manage this in your owner dashboard.</p>
       <div style="background-color: #f9fafb; padding: 16px; border-radius: 8px; margin: 16px 0;">
         <p><strong>Property:</strong> ${request.propertyName}</p>
-        <p><strong>Guest Name:</strong> ${request.fullName}</p>
-        <p><strong>Email:</strong> ${request.email}</p>
-        <p><strong>Phone:</strong> ${request.phone || 'Not provided'}</p>
-        <p><strong>Check-in:</strong> ${request.checkin ? new Date(request.checkin).toLocaleDateString() : 'Flexible'}</p>
-        <p><strong>Check-out:</strong> ${request.checkout ? new Date(request.checkout).toLocaleDateString() : 'Flexible'}</p>
+        <p><strong>Guest name:</strong> ${request.fullName}</p>
+        <p><strong>Guest email:</strong> ${request.email}</p>
+        <p><strong>Guest phone:</strong> ${guestPhone}</p>
+        <p><strong>Your phone on file:</strong> ${ownerPhone}</p>
+        <p><strong>Check-in:</strong> ${formatRequestDate(request.checkin)}</p>
+        <p><strong>Check-out:</strong> ${formatRequestDate(request.checkout)}</p>
         <p><strong>Guests:</strong> ${request.guests || 1}</p>
         <p><strong>Message:</strong> ${request.message || 'No message'}</p>
       </div>
-      <p>Log in to your dashboard to contact the guest and respond to this request.</p>
+      <p>Sign in to your dashboard to accept or decline this request.</p>
     </div>
   `;
 
   return sendEmail({
     to: ownerEmail,
-    subject: `New Guest Request for ${request.propertyName} - MyGatewayRental`,
+    subject: `New rent request — ${request.propertyName}`,
     html,
-    text: `New guest request from ${request.fullName} for ${request.propertyName}`,
+    text: `New rent request from ${request.fullName} (${guestPhone}) for ${request.propertyName}`,
+  });
+};
+
+const sendGuestRequestConfirmationToGuest = async (guestEmail, request) => {
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <h2 style="color: #ED8323;">Request received</h2>
+      <p>Hi ${request.fullName},</p>
+      <p>Your rental request for <strong>${request.propertyName}</strong> was submitted successfully. The property owner will review it and respond by email.</p>
+      <div style="background-color: #f9fafb; padding: 16px; border-radius: 8px; margin: 16px 0;">
+        <p><strong>Check-in:</strong> ${formatRequestDate(request.checkin)}</p>
+        <p><strong>Check-out:</strong> ${formatRequestDate(request.checkout)}</p>
+        <p><strong>Guests:</strong> ${request.guests || 1}</p>
+      </div>
+      <p>Thank you for using MyGetawayRental.</p>
+    </div>
+  `;
+
+  return sendEmail({
+    to: guestEmail,
+    subject: `We received your request — ${request.propertyName}`,
+    html,
+    text: `Your rental request for ${request.propertyName} was submitted.`,
+  });
+};
+
+const sendGuestRequestAcceptedToGuest = async (guestEmail, request) => {
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <h2 style="color: #22c55e;">Request accepted</h2>
+      <p>Hi ${request.fullName},</p>
+      <p>Good news — the owner accepted your rental request for <strong>${request.propertyName}</strong>.</p>
+      <div style="background-color: #f0fdf4; padding: 16px; border-radius: 8px; margin: 16px 0;">
+        <p><strong>Check-in:</strong> ${formatRequestDate(request.checkin)}</p>
+        <p><strong>Check-out:</strong> ${formatRequestDate(request.checkout)}</p>
+        <p><strong>Guests:</strong> ${request.guests || 1}</p>
+      </div>
+      <p>The owner may contact you directly to finalize details. If you have questions, reply to this email.</p>
+    </div>
+  `;
+
+  return sendEmail({
+    to: guestEmail,
+    subject: `Confirmed — ${request.propertyName}`,
+    html,
+    text: `Your rental request for ${request.propertyName} was accepted by the owner.`,
+  });
+};
+
+const sendGuestRequestRejectedToGuest = async (guestEmail, request) => {
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <h2 style="color: #6b7280;">Request update</h2>
+      <p>Hi ${request.fullName},</p>
+      <p>Unfortunately, the owner is unable to accommodate your request for <strong>${request.propertyName}</strong> at this time.</p>
+      <p>Browse other stays on MyGetawayRental — we're happy to help you find another option.</p>
+    </div>
+  `;
+
+  return sendEmail({
+    to: guestEmail,
+    subject: `Update on your request — ${request.propertyName}`,
+    html,
+    text: `Your rental request for ${request.propertyName} was declined.`,
   });
 };
 
@@ -287,6 +380,9 @@ module.exports = {
   sendPasswordResetEmail,
   sendInquiryNotification,
   sendGuestRequestNotification,
+  sendGuestRequestConfirmationToGuest,
+  sendGuestRequestAcceptedToGuest,
+  sendGuestRequestRejectedToGuest,
   sendInquiryConfirmationToGuest,
   sendInquiryAcceptedNotification,
   sendInquiryRejectedNotification,
