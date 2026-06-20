@@ -1,8 +1,13 @@
 const prisma = require('../../config/database');
+const { verifyCaptcha } = require('../captcha.controller');
 
 exports.submit = async (req, res) => {
     try {
-        const { name, email, phone, subject, message } = req.body;
+        const { name, email, phone, subject, message, captchaId, captchaCode } = req.body;
+
+        if (!(await verifyCaptcha(captchaId, captchaCode))) {
+            return res.status(400).json({ success: false, message: 'Invalid or expired security code.' });
+        }
 
         if (!name || !email || !subject || !message) {
             return res.status(400).json({

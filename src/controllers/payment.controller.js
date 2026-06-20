@@ -177,6 +177,14 @@ const verifyPayment = async (req, res) => {
                 where: { id: payment.subscriptionId },
                 data: { status: 'ACTIVE' },
             });
+
+            const user = await prisma.user.findUnique({ where: { id: pending.userId } });
+            if (user && user.role !== 'ADMIN' && user.role !== 'OWNER') {
+                await prisma.user.update({
+                    where: { id: pending.userId },
+                    data: { role: 'OWNER' }
+                });
+            }
         }
 
         res.json({

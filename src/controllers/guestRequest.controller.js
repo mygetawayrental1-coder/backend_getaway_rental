@@ -1,5 +1,6 @@
 const prisma = require('../config/database');
 const { getPagination, formatPaginatedResponse } = require('../utils/helpers');
+const { verifyCaptcha } = require('./captcha.controller');
 const {
     sendGuestRequestNotification,
     sendGuestRequestConfirmationToGuest,
@@ -30,8 +31,12 @@ function emailPayload(request, property) {
 // Create guest request (PUBLIC - no auth required)
 const createGuestRequest = async (req, res) => {
     try {
-        const { propertyId, fullName, email, phone, message, checkin, checkout, guests } =
+        const { propertyId, fullName, email, phone, message, checkin, checkout, guests, captchaId, captchaCode } =
             req.body;
+
+        if (!(await verifyCaptcha(captchaId, captchaCode))) {
+            return res.status(400).json({ success: false, message: 'Invalid or expired security code.' });
+        }
 
         if (!propertyId || !fullName || !email) {
             return res.status(400).json({
@@ -265,6 +270,7 @@ const updateGuestRequestStatus = async (req, res) => {
                 property: {
                     select: {
                         propertyName: true,
+                        nightlyRate: true,
                         owner: { select: { id: true } },
                     },
                 },
@@ -307,6 +313,34 @@ const updateGuestRequestStatus = async (req, res) => {
                 await sendGuestRequestAcceptedToGuest(request.email, mailData);
             } catch (emailError) {
                 console.error('Acceptance email failed:', emailError.message);
+            }
+
+            // Automatically create a CONFIRMED booking to block the calendar dates
+            if (request.checkin && request.checkout) {
+                try {
+                    const checkin = new Date(request.checkin);
+                    const checkout = new Date(request.checkout);
+                    const nights = Math.max(1, Math.ceil((checkout - checkin) / (1000 * 60 * 60 * 24)));
+                    const nightlyRate = request.property.nightlyRate || 0;
+
+                    await prisma.booking.create({
+                        data: {
+                            propertyId: request.propertyId,
+                            guestName: request.fullName,
+                            guestEmail: request.email,
+                            guestPhone: request.phone,
+                            checkin,
+                            checkout,
+                            guests: request.guests,
+                            nights,
+                            nightlyRate,
+                            totalAmount: nights * nightlyRate,
+                            status: 'CONFIRMED',
+                        },
+                    });
+                } catch (bookingErr) {
+                    console.error('Failed to create booking from guest request:', bookingErr.message);
+                }
             }
         }
 

@@ -1,5 +1,6 @@
 const prisma = require('../config/database');
 const { getPagination, formatPaginatedResponse } = require('../utils/helpers');
+const { verifyCaptcha } = require('./captcha.controller');
 const { createTypedNotification, NOTIFICATION_TYPES } = require('../services/notification.service');
 const { ROLES } = require('../middleware/roles');
 
@@ -49,7 +50,11 @@ async function notifyAdmins(type, data, vars) {
  */
 const createTicket = async (req, res) => {
     try {
-        const { subject, category, description, priority } = req.body;
+        const { subject, category, description, priority, captchaId, captchaCode } = req.body;
+
+        if (!(await verifyCaptcha(captchaId, captchaCode))) {
+            return res.status(400).json({ success: false, message: 'Invalid or expired security code.' });
+        }
 
         if (!subject?.trim() || !category || !description?.trim()) {
             return res.status(400).json({
@@ -190,7 +195,11 @@ const getTicketById = async (req, res) => {
  */
 const replyToTicket = async (req, res) => {
     try {
-        const { content } = req.body;
+        const { content, captchaId, captchaCode } = req.body;
+
+        if (!(await verifyCaptcha(captchaId, captchaCode))) {
+            return res.status(400).json({ success: false, message: 'Invalid or expired security code.' });
+        }
 
         if (!content?.trim()) {
             return res.status(400).json({ success: false, message: 'content is required.' });

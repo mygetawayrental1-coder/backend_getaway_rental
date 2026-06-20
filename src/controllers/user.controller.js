@@ -114,7 +114,7 @@ const getUserById = async (req, res) => {
 const updateUser = async (req, res) => {
     try {
         const { id } = req.params;
-        const { firstName, lastName, countryCode, phoneNumber, address, profilePic, password } = req.body;
+        const { firstName, lastName, countryCode, phoneNumber, address, profilePic, password, paymentInstructions } = req.body;
 
         // Check authorization
         if (req.user.role !== 'ADMIN' && req.user.id !== id) {
@@ -131,6 +131,7 @@ const updateUser = async (req, res) => {
         if (phoneNumber !== undefined) updateData.phoneNumber = phoneNumber;
         if (address !== undefined) updateData.address = address;
         if (profilePic !== undefined) updateData.profilePic = profilePic;
+        if (paymentInstructions !== undefined) updateData.paymentInstructions = paymentInstructions;
 
         // Update password if provided
         if (password) {
@@ -151,6 +152,7 @@ const updateUser = async (req, res) => {
                 profilePic: true,
                 role: true,
                 emailVerified: true,
+                paymentInstructions: true,
             },
         });
 

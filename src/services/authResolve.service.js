@@ -55,7 +55,10 @@ async function getUserFromBearerToken(token) {
             secretKey: process.env.CLERK_SECRET_KEY,
         });
         const clerkId = payload?.sub;
-        if (!clerkId) return null;
+        if (!clerkId) {
+            console.warn('[auth] Token verified but no sub/clerkId found in payload', payload);
+            return null;
+        }
 
         let user = await prisma.user.findUnique({
             where: { clerkId },
@@ -94,7 +97,8 @@ async function getUserFromBearerToken(token) {
         }
 
         return user;
-    } catch {
+    } catch (error) {
+        console.error('[auth] Token verification failed:', error.message);
         return null;
     }
 }

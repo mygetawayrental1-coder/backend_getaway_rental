@@ -1,4 +1,5 @@
 const prisma = require('../../config/database');
+const { verifyCaptcha } = require('../captcha.controller');
 const {
     formatPropertyResponse,
     formatPropertiesResponse,
@@ -387,7 +388,13 @@ exports.createReview = async (req, res) => {
             clearnessRating,
             roomsRating,
             text,
+            captchaId,
+            captchaCode,
         } = req.body;
+
+        if (!(await verifyCaptcha(captchaId, captchaCode))) {
+            return res.status(400).json({ success: false, message: 'Invalid or expired security code.' });
+        }
 
         const property = await prisma.property.findFirst({
             where: { OR: [{ id }, { propertyId: id }] },

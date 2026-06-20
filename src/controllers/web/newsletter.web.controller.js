@@ -1,8 +1,14 @@
 const prisma = require('../../config/database');
+const { verifyCaptcha } = require('../captcha.controller');
 
 exports.subscribe = async (req, res) => {
     try {
-        const { email } = req.body;
+        const { email, captchaId, captchaCode } = req.body;
+
+        if (!(await verifyCaptcha(captchaId, captchaCode))) {
+            return res.status(400).json({ success: false, message: 'Invalid or expired security code.' });
+        }
+
         const normalized = String(email || '')
             .trim()
             .toLowerCase();

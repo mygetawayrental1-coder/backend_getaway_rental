@@ -1,7 +1,9 @@
 const { Prisma } = require('@prisma/client');
 const prisma = require('../config/database');
 const { getPagination, formatPaginatedResponse, parseJsonField } = require('../utils/helpers');
+const { verifyCaptcha } = require('./captcha.controller');
 const { createTypedNotification, NOTIFICATION_TYPES } = require('../services/notification.service');
+const { sendPaymentPendingEmail } = require('../services/email.service');
 
 const BLOCKING_STATUSES = ['CONFIRMED', 'ONGOING'];
 
@@ -278,7 +280,13 @@ const createBooking = async (req, res) => {
             checkout,
             guests,
             notes,
+            captchaId,
+            captchaCode,
         } = req.body;
+
+        if (!(await verifyCaptcha(captchaId, captchaCode))) {
+            return res.status(400).json({ success: false, message: 'Invalid or expired security code.' });
+        }
 
         if (!propertyId || !guestName || !guestEmail || !checkin || !checkout) {
             return res.status(400).json({
@@ -631,6 +639,12 @@ const confirmBooking = async (req, res) => {
 
         try {
             await notifyGuest(updated, updated.property, NOTIFICATION_TYPES.BOOKING_CONFIRMED);
+            
+            // Also send Payment Pending email
+            const owner = await prisma.user.findUnique({ where: { id: updated.property.ownerId } });
+            if (updated.guestEmail && owner) {
+                await sendPaymentPendingEmail(updated.guestEmail, updated, owner);
+            }
         } catch (notifyErr) {
             console.error('Booking confirmed notification error:', notifyErr);
         }

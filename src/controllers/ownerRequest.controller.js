@@ -80,8 +80,12 @@ const createCustomPricingRequest = async (req, res) => {
 // Create become-a-host application (web onboarding)
 const createBecomeOwnerRequest = async (req, res) => {
     try {
-        const { type, message, phone, numProperties } = req.body;
+        const { type, message, phone, numProperties, captchaId, captchaCode } = req.body;
         const userId = req.user.id;
+
+        if (!verifyCaptcha(captchaId, captchaCode)) {
+            return res.status(400).json({ success: false, message: 'Invalid or expired security code.' });
+        }
 
         if (type && type !== 'BECOME_OWNER') {
             return res.status(400).json({

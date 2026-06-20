@@ -1,5 +1,6 @@
 const prisma = require('../config/database');
 const { getPagination, formatPaginatedResponse } = require('../utils/helpers');
+const { verifyCaptcha } = require('./captcha.controller');
 const {
     createNotification,
     createTypedNotification,
@@ -38,7 +39,11 @@ async function findReviewById(id) {
 const replyToReview = async (req, res) => {
     try {
         const { id } = req.params;
-        const { reply } = req.body;
+        const { reply, captchaId, captchaCode } = req.body;
+
+        if (!(await verifyCaptcha(captchaId, captchaCode))) {
+            return res.status(400).json({ success: false, message: 'Invalid or expired security code.' });
+        }
 
         if (!reply || !String(reply).trim()) {
             return res.status(400).json({
@@ -154,7 +159,7 @@ const rejectReview = async (req, res) => {
  */
 const getAllReviewsForModeration = async (req, res) => {
     try {
-        const { page, limit, skip } = getPagination(req.query);
+        const { page, limit, skip } = getPagination(req.query.page, req.query.limit);
 
         const where = { isApproved: false };
 
@@ -185,7 +190,7 @@ const getAllReviewsForModeration = async (req, res) => {
 const getMyPropertyReviews = async (req, res) => {
     try {
         const { propertyId } = req.query;
-        const { page, limit, skip } = getPagination(req.query);
+        const { page, limit, skip } = getPagination(req.query.page, req.query.limit);
 
         const where = {
             isApproved: true,
@@ -221,7 +226,7 @@ const getMyPropertyReviews = async (req, res) => {
  */
 const getApprovedReviews = async (req, res) => {
     try {
-        const { page, limit, skip } = getPagination(req.query);
+        const { page, limit, skip } = getPagination(req.query.page, req.query.limit);
 
         const where = { isApproved: true };
 

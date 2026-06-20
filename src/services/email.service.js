@@ -23,18 +23,17 @@ const transporter = nodemailer.createTransport({
 const FROM_EMAIL = process.env.BREVO_FROM_EMAIL || 'noreply@example.com';
 const FROM_NAME = process.env.BREVO_FROM_NAME || 'MyGetawayRental';
 
-// Generic Send email wrapper
 const sendEmail = async ({ to, subject, html, text }) => {
   if (!brevoConfigured) {
     throw new Error('Brevo SMTP is not configured.');
   }
   try {
     const mailOptions = {
-      from: `"${FROM_NAME}" <${FROM_EMAIL}>`, // sender address
-      to: Array.isArray(to) ? to.join(', ') : to, // list of receivers
+      from: `"${FROM_NAME}" <${FROM_EMAIL}>`,
+      to: Array.isArray(to) ? to.join(', ') : to,
       subject: subject,
-      text: text, // plain text body
-      html: html, // html body
+      text: text,
+      html: html,
     };
 
     const data = await transporter.sendMail(mailOptions);
@@ -114,7 +113,6 @@ const sendCustomPricingAdminNotification = async (ownerName, ownerEmail, planNam
   }
 };
 
-// Send email verification
 const sendVerificationEmail = async (email, token) => {
   const verifyUrl = `${process.env.APP_URL}/auth/verify-email/${token}`;
 
@@ -141,7 +139,6 @@ const sendVerificationEmail = async (email, token) => {
   });
 };
 
-// Send password reset email
 const sendPasswordResetEmail = async (email, token) => {
   const resetUrl = `${process.env.FRONTEND_URL}/reset-password?token=${token}`;
 
@@ -168,7 +165,6 @@ const sendPasswordResetEmail = async (email, token) => {
   });
 };
 
-// Send inquiry notification to owner
 const sendInquiryNotification = async (ownerEmail, inquiry) => {
   const html = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
@@ -209,7 +205,6 @@ function formatRequestDate(value) {
   }
 }
 
-// Notify owner by email (guest rent request)
 const sendGuestRequestNotification = async (ownerEmail, request) => {
   const ownerPhone = request.ownerPhone || 'Not on file';
   const guestPhone = request.phone || 'Not provided';
@@ -305,7 +300,6 @@ const sendGuestRequestRejectedToGuest = async (guestEmail, request) => {
   });
 };
 
-// Send inquiry confirmation to guest 
 const sendInquiryConfirmationToGuest = async (guestEmail, inquiry) => {
   const html = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
@@ -330,7 +324,6 @@ const sendInquiryConfirmationToGuest = async (guestEmail, inquiry) => {
   });
 };
 
-// Send inquiry accepted notification to guest
 const sendInquiryAcceptedNotification = async (guestEmail, inquiry) => {
   const html = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
@@ -355,7 +348,6 @@ const sendInquiryAcceptedNotification = async (guestEmail, inquiry) => {
   });
 };
 
-// Send inquiry rejected notification to guest 
 const sendInquiryRejectedNotification = async (guestEmail, inquiry) => {
   const html = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
@@ -374,6 +366,156 @@ const sendInquiryRejectedNotification = async (guestEmail, inquiry) => {
   });
 };
 
+const sendPaymentPendingEmail = async (guestEmail, booking, owner) => {
+  let instructionsHtml = '<p>Please contact the owner for payment instructions.</p>';
+  let instructionsText = 'Please contact the owner for payment instructions.';
+
+  if (owner.paymentInstructions) {
+    try {
+      const parsed = JSON.parse(owner.paymentInstructions);
+      
+      const titles = {
+        cards: '💳 Credit & Debit Cards',
+        wallets: '📱 Digital Wallets',
+        p2p: '💸 P2P Apps (Venmo, Zelle, CashApp)',
+        bank: '🏦 Bank Transfers',
+        bnpl: '🛍️ Buy Now, Pay Later',
+        cash: '💵 Cash'
+      };
+
+      const parts = Object.entries(parsed)
+        .filter(([_, config]) => config.enabled && config.info.trim())
+        .map(([key, config]) => {
+          const title = titles[key] || 'Other';
+          return `
+            <div style="margin-bottom: 12px;">
+              <strong style="display: block; color: #1e293b; margin-bottom: 4px;">${title}</strong>
+              <div style="white-space: pre-wrap; color: #475569;">${config.info}</div>
+            </div>
+          `;
+        });
+
+      if (parts.length > 0) {
+        instructionsHtml = parts.join('');
+        instructionsText = Object.entries(parsed)
+          .filter(([_, config]) => config.enabled && config.info.trim())
+          .map(([key, config]) => `${titles[key] || 'Other'}:\n${config.info}`)
+          .join('\n\n');
+      } else {
+        instructionsHtml = '<p>The owner has not specified any payment methods. Please contact them directly.</p>';
+        instructionsText = 'The owner has not specified any payment methods. Please contact them directly.';
+      }
+    } catch (e) {
+      instructionsHtml = `<div style="white-space: pre-wrap;">${owner.paymentInstructions}</div>`;
+      instructionsText = owner.paymentInstructions;
+    }
+  }
+
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <h2 style="color: #10B981;">Booking Confirmed! Payment Pending</h2>
+      <p>Hi ${booking.guestName},</p>
+      <p>Your booking for <strong>${booking.property?.propertyName || 'the property'}</strong> has been confirmed by the owner!</p>
+      <div style="background-color: #f9fafb; padding: 16px; border-radius: 8px; margin: 16px 0;">
+        <p><strong>Check-in:</strong> ${new Date(booking.checkin).toLocaleDateString()}</p>
+        <p><strong>Check-out:</strong> ${new Date(booking.checkout).toLocaleDateString()}</p>
+        <p><strong>Total Amount:</strong> $${booking.totalAmount}</p>
+      </div>
+      <h3>How to Pay:</h3>
+      <div style="background-color: #fff8e1; padding: 16px; border-radius: 8px; border-left: 4px solid #f59e0b; margin: 16px 0;">
+        ${instructionsHtml}
+      </div>
+      <p>Once you make a payment, the owner will log it and you will receive a confirmation email.</p>
+    </div>
+  `;
+
+  return sendEmail({
+    to: guestEmail,
+    subject: `Payment Pending: Booking Confirmed for ${booking.property?.propertyName || 'Property'}`,
+    html,
+    text: `Your booking is confirmed.\n\nPayment instructions:\n\n${instructionsText}`,
+  });
+};
+
+const sendPaymentConfirmationEmail = async (guestEmail, booking, payment, totalPaid, balance) => {
+  const isFull = balance <= 0;
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <h2 style="color: #3b82f6;">Payment Received</h2>
+      <p>Hi ${booking.guestName},</p>
+      <p>We received your payment of <strong>$${payment.amount}</strong> for your booking at <strong>${booking.property?.propertyName || 'the property'}</strong>.</p>
+      <div style="background-color: #f9fafb; padding: 16px; border-radius: 8px; margin: 16px 0;">
+        <p><strong>Payment Amount:</strong> $${payment.amount}</p>
+        <p><strong>Total Paid So Far:</strong> $${totalPaid}</p>
+        <p><strong>Remaining Balance:</strong> $${Math.max(0, balance)}</p>
+        <p><strong>Date Logged:</strong> ${new Date(payment.paidAt).toLocaleDateString()}</p>
+      </div>
+      <p>${isFull ? 'Your booking is now fully paid. You will receive an invoice shortly.' : 'Please follow the owner payment instructions to pay the remaining balance.'}</p>
+    </div>
+  `;
+
+  return sendEmail({
+    to: guestEmail,
+    subject: `Payment Received - $${payment.amount}`,
+    html,
+    text: `We received your payment of $${payment.amount}. Total Paid: $${totalPaid}. Balance: $${balance}.`,
+  });
+};
+
+const sendInvoiceEmail = async (guestEmail, booking, payments) => {
+  const totalPaid = payments.reduce((sum, p) => sum + p.amount, 0);
+  const paymentRows = payments.map(p => `
+    <tr>
+      <td style="padding: 8px; border-bottom: 1px solid #eee;">${new Date(p.paidAt).toLocaleDateString()}</td>
+      <td style="padding: 8px; border-bottom: 1px solid #eee;">${p.paymentMethod}</td>
+      <td style="padding: 8px; border-bottom: 1px solid #eee;">$${p.amount}</td>
+    </tr>
+  `).join('');
+
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <h2 style="color: #10B981;">Invoice - Paid in Full</h2>
+      <p>Hi ${booking.guestName},</p>
+      <p>Your booking for <strong>${booking.property?.propertyName || 'the property'}</strong> is fully paid. Here is your final invoice.</p>
+      
+      <div style="background-color: #f9fafb; padding: 16px; border-radius: 8px; margin: 16px 0;">
+        <p><strong>Booking Reference:</strong> ${booking.id}</p>
+        <p><strong>Check-in:</strong> ${new Date(booking.checkin).toLocaleDateString()}</p>
+        <p><strong>Check-out:</strong> ${new Date(booking.checkout).toLocaleDateString()}</p>
+        <p><strong>Total Booking Amount:</strong> $${booking.totalAmount}</p>
+      </div>
+
+      <h3 style="margin-top: 24px;">Payment History</h3>
+      <table style="width: 100%; text-align: left; border-collapse: collapse; margin-top: 8px;">
+        <thead>
+          <tr style="background-color: #f1f5f9;">
+            <th style="padding: 8px; border-bottom: 1px solid #cbd5e1;">Date</th>
+            <th style="padding: 8px; border-bottom: 1px solid #cbd5e1;">Method</th>
+            <th style="padding: 8px; border-bottom: 1px solid #cbd5e1;">Amount</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${paymentRows}
+        </tbody>
+      </table>
+      
+      <div style="text-align: right; margin-top: 16px;">
+        <p><strong>Total Paid:</strong> $${totalPaid}</p>
+        <p><strong>Balance:</strong> $0.00</p>
+      </div>
+      
+      <p style="margin-top: 24px;">Thank you for your business!</p>
+    </div>
+  `;
+
+  return sendEmail({
+    to: guestEmail,
+    subject: `Invoice: Paid in Full - ${booking.property?.propertyName || 'Property'}`,
+    html,
+    text: `Your booking is fully paid. Invoice attached in HTML.`,
+  });
+};
+
 module.exports = {
   sendEmail,
   sendVerificationEmail,
@@ -388,4 +530,7 @@ module.exports = {
   sendInquiryRejectedNotification,
   sendCustomPricingOwnerConfirmation,
   sendCustomPricingAdminNotification,
+  sendPaymentPendingEmail,
+  sendPaymentConfirmationEmail,
+  sendInvoiceEmail,
 };

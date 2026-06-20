@@ -1,346 +1,205 @@
 const prisma = require('../config/database');
 const { getPagination, formatPaginatedResponse } = require('../utils/helpers');
-const { createTypedNotification, NOTIFICATION_TYPES } = require('../services/notification.service');
-
-function currentPeriod() {
-    const d = new Date();
-    const month = String(d.getMonth() + 1).padStart(2, '0');
-    return `${d.getFullYear()}-${month}`;
-}
-
-function monthRange(year, monthIndex) {
-    const start = new Date(year, monthIndex, 1);
-    const end = new Date(year, monthIndex + 1, 1);
-    return { start, end };
-}
 
 function roundMoney(n) {
     return Math.round((n || 0) * 100) / 100;
 }
 
-async function computeEarningsSummary(ownerId) {
-    const completedBase = {
-        status: 'COMPLETED',
-        property: { ownerId },
-    };
-
-    const now = new Date();
-    const thisMonth = monthRange(now.getFullYear(), now.getMonth());
-    const lastMonth = monthRange(now.getFullYear(), now.getMonth() - 1);
-
-    const [
-        totalAgg,
-        thisMonthAgg,
-        lastMonthAgg,
-        pendingAgg,
-        paidAgg,
-    ] = await Promise.all([
-        prisma.booking.aggregate({
-            where: completedBase,
-            _sum: { totalAmount: true },
-        }),
-        prisma.booking.aggregate({
-            where: {
-                ...completedBase,
-                completedAt: { gte: thisMonth.start, lt: thisMonth.end },
-            },
-            _sum: { totalAmount: true },
-        }),
-        prisma.booking.aggregate({
-            where: {
-                ...completedBase,
-                completedAt: { gte: lastMonth.start, lt: lastMonth.end },
-            },
-            _sum: { totalAmount: true },
-        }),
-        prisma.payout.aggregate({
-            where: {
-                ownerId,
-                status: { in: ['PENDING', 'PROCESSING'] },
-            },
-            _sum: { amount: true },
-        }),
-        prisma.payout.aggregate({
-            where: { ownerId, status: 'PAID' },
-            _sum: { amount: true },
-        }),
-    ]);
-
-    const totalEarnings = roundMoney(totalAgg._sum.totalAmount);
-    const thisMonthEarnings = roundMoney(thisMonthAgg._sum.totalAmount);
-    const lastMonthEarnings = roundMoney(lastMonthAgg._sum.totalAmount);
-    const pendingPayouts = roundMoney(pendingAgg._sum.amount);
-    const paidOut = roundMoney(paidAgg._sum.amount);
-    const availableForPayout = roundMoney(totalEarnings - pendingPayouts - paidOut);
-
-    return {
-        totalEarnings,
-        thisMonthEarnings,
-        lastMonthEarnings,
-        pendingPayouts,
-        paidOut,
-        availableForPayout: Math.max(0, availableForPayout),
-        period: currentPeriod(),
-    };
-}
-
-/**
- * GET /payouts/earnings
- */
 const getEarningsSummary = async (req, res) => {
     try {
-        const summary = await computeEarningsSummary(req.user.id);
-        res.json({ success: true, data: summary });
+        const ownerId = req.user.id;
+        
+        const acceptedStatuses = ['CONFIRMED', 'ONGOING', 'COMPLETED'];
+        
+        const totalAgg = await prisma.booking.aggregate({
+            where: {
+                property: { ownerId },
+                status: { in: acceptedStatuses }
+            },
+            _sum: { totalAmount: true }
+        });
+
+        const collectedAgg = await prisma.bookingPayment.aggregate({
+            where: {
+                booking: {
+                    property: { ownerId },
+                    status: { in: acceptedStatuses }
+                },
+                status: 'PAID'
+            },
+            _sum: { amount: true }
+        });
+
+        const totalExpected = roundMoney(totalAgg._sum.totalAmount);
+        const totalCollected = roundMoney(collectedAgg._sum.amount);
+        const pendingCollection = Math.max(0, roundMoney(totalExpected - totalCollected));
+
+        res.json({
+            success: true,
+            data: {
+                totalEarnings: totalExpected,      
+                paidOut: totalCollected,           
+                pendingPayouts: pendingCollection, 
+                thisMonthEarnings: 0, 
+                lastMonthEarnings: 0,
+                availableForPayout: 0
+            }
+        });
     } catch (error) {
-        console.error('Get earnings summary error:', error);
-        res.status(500).json({ success: false, message: 'Failed to load earnings summary.' });
+        console.error('Get payments summary error:', error);
+        res.status(500).json({ success: false, message: 'Failed to load payments summary.' });
     }
 };
 
-/**
- * GET /payouts/history
- */
 const getPayoutHistory = async (req, res) => {
     try {
-        const { status, page, limit } = req.query;
+        const { page, limit } = req.query;
         const pagination = getPagination(page, limit);
 
-        const where = { ownerId: req.user.id };
-        if (status) where.status = String(status).toUpperCase();
-
-        const [rows, total] = await Promise.all([
-            prisma.payout.findMany({
-                where,
-                skip: pagination.skip,
-                take: pagination.take,
-                orderBy: { requestedAt: 'desc' },
-            }),
-            prisma.payout.count({ where }),
-        ]);
-
-        res.json({
-            success: true,
-            ...formatPaginatedResponse(rows, total, pagination.page, pagination.limit),
-        });
-    } catch (error) {
-        console.error('Get payout history error:', error);
-        res.status(500).json({ success: false, message: 'Failed to fetch payout history.' });
-    }
-};
-
-/**
- * POST /payouts/request
- */
-const requestPayout = async (req, res) => {
-    try {
-        const { amount, currency, method, notes } = req.body;
-        const parsedAmount = parseFloat(amount);
-
-        if (!parsedAmount || parsedAmount <= 0) {
-            return res.status(400).json({
-                success: false,
-                message: 'A valid payout amount greater than zero is required.',
-            });
-        }
-
-        const summary = await computeEarningsSummary(req.user.id);
-        if (parsedAmount > summary.availableForPayout) {
-            return res.status(400).json({
-                success: false,
-                message: `Requested amount exceeds available balance ($${summary.availableForPayout}).`,
-                data: summary,
-            });
-        }
-
-        const payout = await prisma.payout.create({
-            data: {
-                ownerId: req.user.id,
-                amount: roundMoney(parsedAmount),
-                currency: currency || 'USD',
-                method: method || null,
-                notes: notes || null,
-                status: 'PENDING',
-                period: currentPeriod(),
-            },
-        });
-
-        try {
-            const admins = await prisma.user.findMany({
-                where: { role: 'ADMIN', isActive: true },
-                select: { id: true },
-            });
-            const ownerName = [req.user.firstName, req.user.lastName].filter(Boolean).join(' ') || req.user.email;
-
-            await Promise.all(
-                admins.map((admin) =>
-                    createTypedNotification({
-                        userId: admin.id,
-                        type: NOTIFICATION_TYPES.PAYOUT_REQUEST_NEW,
-                        data: {
-                            payoutId: payout.id,
-                            ownerId: req.user.id,
-                            amount: payout.amount,
-                            currency: payout.currency,
-                        },
-                        vars: { amount: payout.amount, ownerName },
-                    }),
-                ),
-            );
-        } catch (notifyErr) {
-            console.error('Payout request admin notification error:', notifyErr);
-        }
-
-        res.status(201).json({
-            success: true,
-            message: 'Payout request submitted.',
-            data: payout,
-        });
-    } catch (error) {
-        console.error('Request payout error:', error);
-        res.status(500).json({ success: false, message: 'Failed to submit payout request.' });
-    }
-};
-
-/**
- * GET /payouts/admin/all
- */
-const getAllPayouts = async (req, res) => {
-    try {
-        const { status, period, page, limit } = req.query;
-        const pagination = getPagination(page, limit);
-
-        const where = {};
-        if (status) where.status = String(status).toUpperCase();
-        if (period) where.period = String(period);
-
-        const [rows, total] = await Promise.all([
-            prisma.payout.findMany({
-                where,
-                skip: pagination.skip,
-                take: pagination.take,
-                orderBy: { requestedAt: 'desc' },
-                include: {
-                    owner: {
-                        select: {
-                            id: true,
-                            email: true,
-                            firstName: true,
-                            lastName: true,
-                            phoneNumber: true,
-                        },
-                    },
-                },
-            }),
-            prisma.payout.count({ where }),
-        ]);
-
-        res.json({
-            success: true,
-            ...formatPaginatedResponse(rows, total, pagination.page, pagination.limit),
-        });
-    } catch (error) {
-        console.error('Get all payouts error:', error);
-        res.status(500).json({ success: false, message: 'Failed to fetch payouts.' });
-    }
-};
-
-/**
- * PATCH /payouts/:id/process
- */
-const processPayout = async (req, res) => {
-    try {
-        const { id } = req.params;
-        const { status, reference, notes } = req.body;
-
-        const allowed = ['PROCESSING', 'PAID', 'FAILED'];
-        const nextStatus = status ? String(status).toUpperCase() : null;
-
-        if (!nextStatus || !allowed.includes(nextStatus)) {
-            return res.status(400).json({
-                success: false,
-                message: 'status must be one of: PROCESSING, PAID, FAILED.',
-            });
-        }
-
-        const payout = await prisma.payout.findUnique({
-            where: { id },
-            include: {
-                owner: {
-                    select: { id: true, email: true, firstName: true, lastName: true },
-                },
-            },
-        });
-
-        if (!payout) {
-            return res.status(404).json({ success: false, message: 'Payout not found.' });
-        }
-
-        const now = new Date();
-        const updateData = {
-            status: nextStatus,
+        const where = {
+            property: { ownerId: req.user.id },
+            status: { in: ['CONFIRMED', 'ONGOING', 'COMPLETED'] }
         };
 
-        if (reference !== undefined) updateData.reference = reference || null;
-        if (notes !== undefined) updateData.notes = notes || null;
+        const [rows, total] = await Promise.all([
+            prisma.booking.findMany({
+                where,
+                skip: pagination.skip,
+                take: pagination.take,
+                orderBy: { createdAt: 'desc' },
+                include: {
+                    property: { select: { propertyName: true } },
+                    payments: {
+                        orderBy: { createdAt: 'asc' }
+                    }
+                }
+            }),
+            prisma.booking.count({ where }),
+        ]);
 
-        if (nextStatus === 'PROCESSING' || nextStatus === 'FAILED') {
-            updateData.processedAt = now;
-        }
-        if (nextStatus === 'PAID') {
-            updateData.paidAt = now;
-            if (!payout.processedAt) updateData.processedAt = now;
-        }
-
-        const updated = await prisma.payout.update({
-            where: { id: payout.id },
-            data: updateData,
-            include: {
-                owner: {
-                    select: {
-                        id: true,
-                        email: true,
-                        firstName: true,
-                        lastName: true,
-                        phoneNumber: true,
-                    },
-                },
-            },
+        const formattedRows = rows.map(b => {
+            const payments = b.payments || [];
+            const totalPaid = payments.reduce((sum, p) => sum + p.amount, 0);
+            const status = totalPaid >= b.totalAmount ? 'PAID' : (totalPaid > 0 ? 'PARTIAL' : 'PENDING');
+            
+            return {
+                id: b.id, 
+                amount: b.totalAmount,
+                currency: payments.length > 0 ? payments[0].currency : 'USD',
+                status: status, 
+                method: payments.length > 0 ? payments[payments.length - 1].paymentMethod : 'Offline',
+                requestedAt: b.createdAt,
+                paidAt: payments.length > 0 ? payments[payments.length - 1].paidAt : null,
+                propertyName: b.property.propertyName,
+                guestEmail: b.guestEmail,
+                totalPaid,
+                payments
+            };
         });
 
-        if (nextStatus === 'PAID') {
+        res.json({
+            success: true,
+            ...formatPaginatedResponse(formattedRows, total, pagination.page, pagination.limit),
+        });
+    } catch (error) {
+        console.error('Get booking payments history error:', error);
+        res.status(500).json({ success: false, message: 'Failed to fetch payments history.' });
+    }
+};
+
+const logPayment = async (req, res) => {
+    try {
+        const { bookingId } = req.params;
+        const { amount, paymentMethod, paidAt } = req.body;
+        const ownerId = req.user.id;
+
+        const booking = await prisma.booking.findFirst({
+            where: { id: bookingId, property: { ownerId } },
+            include: { property: true }
+        });
+
+        if (!booking) {
+            return res.status(404).json({ success: false, message: 'Booking not found.' });
+        }
+
+        const payment = await prisma.bookingPayment.create({
+            data: {
+                bookingId,
+                amount: parseFloat(amount),
+                status: 'PAID',
+                paymentMethod: paymentMethod || 'Offline',
+                paidAt: paidAt ? new Date(paidAt) : new Date()
+            }
+        });
+
+        const allPayments = await prisma.bookingPayment.findMany({ where: { bookingId } });
+        const totalPaid = allPayments.reduce((sum, p) => sum + p.amount, 0);
+        const balance = booking.totalAmount - totalPaid;
+
+        if (booking.guestEmail) {
+            const { sendPaymentConfirmationEmail, sendInvoiceEmail } = require('../services/email.service');
             try {
-                await createTypedNotification({
-                    userId: updated.ownerId,
-                    type: NOTIFICATION_TYPES.PAYOUT_PROCESSED,
-                    data: {
-                        payoutId: updated.id,
-                        amount: updated.amount,
-                        currency: updated.currency,
-                        reference: updated.reference,
-                    },
-                    vars: { amount: updated.amount },
-                });
-            } catch (notifyErr) {
-                console.error('Payout processed owner notification error:', notifyErr);
+                await sendPaymentConfirmationEmail(booking.guestEmail, booking, payment, totalPaid, balance);
+                if (balance <= 0) {
+                    await sendInvoiceEmail(booking.guestEmail, booking, allPayments);
+                }
+            } catch (err) {
+                console.error('Failed to send payment email', err);
             }
         }
 
         res.json({
             success: true,
-            message: 'Payout updated.',
-            data: updated,
+            message: 'Payment logged successfully.',
+            data: payment
         });
     } catch (error) {
-        console.error('Process payout error:', error);
-        res.status(500).json({ success: false, message: 'Failed to process payout.' });
+        console.error('Log payment error:', error);
+        res.status(500).json({ success: false, message: 'Failed to log payment.' });
     }
+};
+
+const deletePayment = async (req, res) => {
+    try {
+        const { paymentId } = req.params;
+        const ownerId = req.user.id;
+
+        const payment = await prisma.bookingPayment.findUnique({
+            where: { id: paymentId },
+            include: { booking: { include: { property: true } } }
+        });
+
+        if (!payment || payment.booking.property.ownerId !== ownerId) {
+            return res.status(404).json({ success: false, message: 'Payment not found or access denied.' });
+        }
+
+        await prisma.bookingPayment.delete({ where: { id: paymentId } });
+
+        res.json({ success: true, message: 'Payment deleted successfully.' });
+    } catch (error) {
+        console.error('Delete payment error:', error);
+        res.status(500).json({ success: false, message: 'Failed to delete payment.' });
+    }
+};
+
+const getAllPayouts = async (req, res) => {
+    res.json({ success: true, data: [], meta: { total: 0 } });
+};
+
+const processPayout = async (req, res) => {
+    res.json({ success: false, message: 'Not applicable' });
+};
+
+const requestPayout = async (req, res) => {
+    res.status(400).json({ success: false, message: 'Please use the new offline payments ledger to mark bookings as paid.' });
 };
 
 module.exports = {
     getEarningsSummary,
     getPayoutHistory,
+    logPayment,
+    deletePayment,
     requestPayout,
     getAllPayouts,
-    processPayout,
-    computeEarningsSummary,
+    processPayout
 };

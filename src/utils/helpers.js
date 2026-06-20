@@ -79,8 +79,22 @@ function buildLocationFilter(term) {
 
 // Pagination helper
 const getPagination = (page = 1, limit = 10) => {
-    const pageNum = Math.max(1, parseInt(page));
-    const limitNum = Math.min(100, Math.max(1, parseInt(limit)));
+    let parsedPage = 1;
+    if (typeof page === 'string' || typeof page === 'number') {
+        parsedPage = parseInt(page);
+    } else if (Array.isArray(page) && page.length > 0) {
+        parsedPage = parseInt(page[0]);
+    }
+    const pageNum = isNaN(parsedPage) ? 1 : Math.max(1, parsedPage);
+
+    let parsedLimit = 10;
+    if (typeof limit === 'string' || typeof limit === 'number') {
+        parsedLimit = parseInt(limit);
+    } else if (Array.isArray(limit) && limit.length > 0) {
+        parsedLimit = parseInt(limit[0]);
+    }
+    const limitNum = isNaN(parsedLimit) ? 10 : Math.min(100, Math.max(1, parsedLimit));
+
     const skip = (pageNum - 1) * limitNum;
     return { skip, take: limitNum, page: pageNum, limit: limitNum };
 };

@@ -1,5 +1,6 @@
 const prisma = require('../config/database');
 const { multerFileToPublicPath } = require('../config/storage');
+const icalService = require('../services/ical.service');
 const { verifyCaptcha } = require('./captcha.controller');
 const {
     stringifyJsonField,
@@ -97,7 +98,7 @@ const getAvailability = async (req, res) => {
             return res.status(404).json({ success: false, message: 'Property not found.' });
         }
 
-        const [ownerBlocks, bookingBlocks] = await Promise.all([
+        const [ownerBlocks, bookingBlocks, icalBlocks] = await Promise.all([
             prisma.propertyAvailability.findMany({
                 where: {
                     propertyId: property.id,
@@ -119,6 +120,18 @@ const getAvailability = async (req, res) => {
                 },
                 orderBy: { checkin: 'asc' },
             }),
+            prisma.icalEvent.findMany({
+                where: {
+                    propertyId: property.id,
+                    dtStart: { lte: rangeEnd },
+                    dtEnd: { gt: rangeStart },
+                },
+                select: {
+                    dtStart: true,
+                    dtEnd: true,
+                },
+                orderBy: { dtStart: 'asc' },
+            }),
         ]);
 
         res.json({
@@ -127,6 +140,10 @@ const getAvailability = async (req, res) => {
             blockedByBookings: bookingBlocks.map((b) => ({
                 checkin: b.checkin,
                 checkout: b.checkout,
+            })),
+            blockedByIcal: icalBlocks.map((b) => ({
+                checkin: b.dtStart,
+                checkout: b.dtEnd,
             })),
         });
     } catch (error) {
@@ -375,6 +392,22 @@ const createProperty = async (req, res) => {
             },
         });
 
+        // Sync iCal URLs if any
+        if (property.icalUrls) {
+            try {
+                const parsedUrls = JSON.parse(property.icalUrls);
+                for (const [source, url] of Object.entries(parsedUrls)) {
+                    if (url) {
+                        icalService.importFromUrl(property.id, source, String(url)).catch(err => {
+                            console.error(`Failed to background sync iCal for ${source}:`, err);
+                        });
+                    }
+                }
+            } catch (err) {
+                console.error('Failed to parse icalUrls for sync:', err);
+            }
+        }
+
         res.status(201).json({
             success: true,
             message: 'Property created successfully.',
@@ -599,7 +632,11 @@ const getPropertiesByEmail = async (req, res) => {
 const updateProperty = async (req, res) => {
     try {
         const { id } = req.params;
-        const updateData = req.body;
+        const { captchaId, captchaCode, ...updateData } = req.body;
+
+        if (!(await verifyCaptcha(captchaId, captchaCode))) {
+            return res.status(400).json({ success: false, message: 'Invalid or expired security code.' });
+        }
 
         const property = await prisma.property.findFirst({
             where: { OR: [{ id }, { propertyId: id }] },
@@ -680,6 +717,22 @@ const updateProperty = async (req, res) => {
                 },
             },
         });
+
+        // Sync iCal URLs if any
+        if (updated.icalUrls) {
+            try {
+                const parsedUrls = JSON.parse(updated.icalUrls);
+                for (const [source, url] of Object.entries(parsedUrls)) {
+                    if (url) {
+                        icalService.importFromUrl(updated.id, source, String(url)).catch(err => {
+                            console.error(`Failed to background sync iCal for ${source}:`, err);
+                        });
+                    }
+                }
+            } catch (err) {
+                console.error('Failed to parse icalUrls for sync:', err);
+            }
+        }
 
         res.json({
             success: true,

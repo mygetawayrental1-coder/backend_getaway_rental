@@ -233,7 +233,7 @@ const subscribe = async (req, res) => {
                 await applyCoupon(resolvedCouponId, tx);
             }
 
-            return tx.userSubscription.create({
+            const newSub = await tx.userSubscription.create({
                 data: {
                     userId,
                     planId,
@@ -247,6 +247,18 @@ const subscribe = async (req, res) => {
                     coupon: true,
                 },
             });
+
+            if (subscriptionStatus === 'ACTIVE') {
+                const user = await tx.user.findUnique({ where: { id: userId } });
+                if (user && user.role !== 'ADMIN' && user.role !== 'OWNER') {
+                    await tx.user.update({
+                        where: { id: userId },
+                        data: { role: 'OWNER' }
+                    });
+                }
+            }
+
+            return newSub;
         }, {
             isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
             maxWait: 5000,
