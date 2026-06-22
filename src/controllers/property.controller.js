@@ -292,22 +292,16 @@ const createProperty = async (req, res) => {
             areaM2,
             discountPercent,
             videoUrl,
+            suitability,
+            checkInTime,
+            checkOutTime,
+            minNights,
+            maxNights,
+            customFields,
         } = req.body;
 
-        // Verify Captcha before proceeding
-        if (!captchaId || !captchaCode) {
-            return res.status(400).json({
-                success: false,
-                message: 'Captcha is required.',
-            });
-        }
-        const isCaptchaValid = verifyCaptcha(captchaId, captchaCode);
-        if (!isCaptchaValid) {
-            return res.status(400).json({
-                success: false,
-                message: 'Invalid captcha.',
-            });
-        }
+        // Removed captcha verification as route is protected by authentication
+
 
         // Extract image URLs from req.files (added by uploadMultiple middleware)
         let images = [];
@@ -384,6 +378,12 @@ const createProperty = async (req, res) => {
                 areaM2: areaM2 != null ? parseInt(areaM2, 10) || null : null,
                 discountPercent: discountPercent != null ? parseInt(discountPercent, 10) || null : null,
                 videoUrl: videoUrl || null,
+                suitability: suitability ? (typeof suitability === 'string' ? suitability : JSON.stringify(suitability)) : null,
+                checkInTime: checkInTime || null,
+                checkOutTime: checkOutTime || null,
+                minNights: minNights != null ? parseInt(minNights, 10) || 1 : 1,
+                maxNights: maxNights != null ? parseInt(maxNights, 10) || null : null,
+                customFields: stringifyJsonField(customFields),
             },
             include: {
                 owner: {
@@ -634,9 +634,7 @@ const updateProperty = async (req, res) => {
         const { id } = req.params;
         const { captchaId, captchaCode, ...updateData } = req.body;
 
-        if (!(await verifyCaptcha(captchaId, captchaCode))) {
-            return res.status(400).json({ success: false, message: 'Invalid or expired security code.' });
-        }
+        // Removed captcha verification as route is protected by authentication
 
         const property = await prisma.property.findFirst({
             where: { OR: [{ id }, { propertyId: id }] },
@@ -661,10 +659,11 @@ const updateProperty = async (req, res) => {
         const fields = [
             'propertyName', 'location', 'state', 'country', 'latitude', 'longitude',
             'about', 'policyAndHouseRules', 'status', 'slug', 'rentalType', 'videoUrl', 'policyDetails',
+            'checkInTime', 'checkOutTime', 'seoTitle', 'seoDescription', 'seoKeywords', 'seoCanonicalUrl', 'seoBacklinks'
         ];
-        const intFields = ['guests', 'bedrooms', 'bathrooms', 'kitchens', 'minRate', 'nightlyRate', 'weekendRate', 'weeklyRate', 'monthlyRate', 'areaM2', 'discountPercent'];
+        const intFields = ['guests', 'bedrooms', 'bathrooms', 'kitchens', 'minRate', 'nightlyRate', 'weekendRate', 'weeklyRate', 'monthlyRate', 'areaM2', 'discountPercent', 'minNights', 'maxNights'];
         const boolFields = ['isFeatured', 'isNew'];
-        const jsonFields = ['additionalCharges', 'amenities', 'icalUrls'];
+        const jsonFields = ['additionalCharges', 'amenities', 'icalUrls', 'suitability', 'customFields'];
         const dateFields = ['ratePeriodStart', 'ratePeriodEnd'];
 
         fields.forEach(field => {

@@ -142,6 +142,14 @@ model Property {
 
   // iCal calendar sync (Airbnb, VRBO, etc.)
   icalUrls String? // JSON: { airbnb: url, vrbo: url, ... }
+  customFields String? // JSON: { fieldName: value }
+
+  // SEO Fields
+  seoTitle        String?
+  seoDescription  String?
+  seoKeywords     String? // Comma-separated or JSON array
+  seoCanonicalUrl String? // Override canonical URL
+  seoBacklinks    String? @db.Text // Admin internal notes for backlinks
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -824,4 +832,18 @@ model IcalEvent {
   @@index([propertyId])
   @@index([uid])
   @@index([dtStart, dtEnd])
+}
+
+model DynamicField {
+  id          String   @id @default(cuid())
+  name        String   @unique // machine name e.g. "parking_fee"
+  label       String   // e.g. "Parking Fee"
+  type        String   // "text" | "number" | "boolean" | "select" | "textarea"
+  options     String?  // JSON string array for select: '["Included", "Paid"]'
+  required    Boolean  @default(false)
+  placeholder String?
+  section     String   @default("features") // e.g. "features" | "rules" | "pricing" | "details"
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }

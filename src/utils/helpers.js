@@ -25,6 +25,7 @@ const formatPropertyResponse = (property) => {
         suitability: parseJsonField(property.suitability),
         images: parseJsonField(property.images),
         icalUrls: parseJsonField(property.icalUrls),
+        customFields: parseJsonField(property.customFields),
     };
 };
 
