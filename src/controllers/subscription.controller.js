@@ -331,7 +331,81 @@ const getMySubscription = async (req, res) => {
     }
 };
 
-// Cancel subscription
+// Admin manually assign or update subscription
+const adminAssignSubscription = async (req, res) => {
+    try {
+        const { userId } = req.params;
+        const { planId, isCustom, customName, customMaxProperties, customDurationMonths } = req.body;
+
+        let finalPlanId = planId;
+        let endDate = new Date();
+
+        // 1. If custom, create a new SubscriptionPlan on the fly
+        if (isCustom) {
+            const newPlan = await prisma.subscriptionPlan.create({
+                data: {
+                    name: customName || `Custom Plan - ${userId}`,
+                    price: 0,
+                    duration: 'Custom',
+                    maxProperties: parseInt(customMaxProperties, 10) || 1,
+                    features: JSON.stringify(["Custom manual limits"]),
+                    status: 'Active'
+                }
+            });
+            finalPlanId = newPlan.id;
+            endDate.setMonth(endDate.getMonth() + (parseInt(customDurationMonths, 10) || 12));
+        } else {
+            // 2. Predefined plan
+            if (!planId) {
+                return res.status(400).json({ success: false, message: 'planId is required for predefined plans' });
+            }
+            const plan = await prisma.subscriptionPlan.findUnique({ where: { id: planId } });
+            if (!plan) return res.status(404).json({ success: false, message: 'Plan not found' });
+            
+            // Calculate end date based on plan duration
+            if (plan.duration.toLowerCase() === 'yearly' || plan.duration.toLowerCase() === 'annual') {
+                endDate.setFullYear(endDate.getFullYear() + 1);
+            } else if (plan.duration.toLowerCase() === 'lifetime') {
+                endDate.setFullYear(endDate.getFullYear() + 100);
+            } else {
+                endDate.setMonth(endDate.getMonth() + 1);
+            }
+        }
+
+        // Cancel existing active subscriptions
+        await prisma.userSubscription.updateMany({
+            where: { userId, status: 'ACTIVE' },
+            data: { status: 'CANCELLED' }
+        });
+
+        // Create new subscription
+        const sub = await prisma.userSubscription.create({
+            data: {
+                userId,
+                planId: finalPlanId,
+                status: 'ACTIVE',
+                startDate: new Date(),
+                endDate,
+                autoRenew: false
+            },
+            include: { plan: true }
+        });
+
+        res.json({
+            success: true,
+            message: 'Subscription assigned successfully.',
+            data: sub
+        });
+    } catch (error) {
+        console.error('Admin assign subscription error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to assign subscription.',
+        });
+    }
+};
+
+// Cancel subscription (Owner or Admin)
 const cancelSubscription = async (req, res) => {
     try {
         const userId = req.user.id;
@@ -377,4 +451,5 @@ module.exports = {
     subscribe,
     getMySubscription,
     cancelSubscription,
+    adminAssignSubscription,
 };

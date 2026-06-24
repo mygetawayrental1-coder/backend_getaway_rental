@@ -34,19 +34,46 @@ const getAllUsers = async (req, res) => {
                     address: true,
                     profilePic: true,
                     role: true,
+                    isActive: true,
                     emailVerified: true,
                     createdAt: true,
                     _count: {
                         select: { properties: true, inquiries: true },
+                    },
+                    subscriptions: {
+                        where: {
+                            status: 'ACTIVE',
+                            endDate: { gt: new Date() },
+                        },
+                        take: 1,
+                        orderBy: { endDate: 'desc' },
+                        include: {
+                            plan: { select: { id: true, name: true, maxProperties: true } },
+                        },
                     },
                 },
             }),
             prisma.user.count({ where }),
         ]);
 
+        const formattedUsers = users.map((u) => {
+            const activeSub = u.subscriptions?.[0] || null;
+            const { subscriptions, ...rest } = u;
+            return {
+                ...rest,
+                subscription: activeSub
+                    ? {
+                          planName: activeSub.plan.name,
+                          maxProperties: activeSub.plan.maxProperties,
+                          endDate: activeSub.endDate,
+                      }
+                    : null,
+            };
+        });
+
         res.json({
             success: true,
-            ...formatPaginatedResponse(users, total, pagination.page, pagination.limit),
+            ...formatPaginatedResponse(formattedUsers, total, pagination.page, pagination.limit),
         });
     } catch (error) {
         console.error('Get all users error:', error);
@@ -114,7 +141,7 @@ const getUserById = async (req, res) => {
 const updateUser = async (req, res) => {
     try {
         const { id } = req.params;
-        const { firstName, lastName, countryCode, phoneNumber, address, profilePic, password, paymentInstructions } = req.body;
+        const { firstName, lastName, countryCode, phoneNumber, address, profilePic, password, paymentInstructions, role, isActive } = req.body;
 
         // Check authorization
         if (req.user.role !== 'ADMIN' && req.user.id !== id) {
@@ -132,6 +159,11 @@ const updateUser = async (req, res) => {
         if (address !== undefined) updateData.address = address;
         if (profilePic !== undefined) updateData.profilePic = profilePic;
         if (paymentInstructions !== undefined) updateData.paymentInstructions = paymentInstructions;
+
+        if (req.user.role === 'ADMIN') {
+            if (role) updateData.role = role;
+            if (isActive !== undefined) updateData.isActive = isActive;
+        }
 
         // Update password if provided
         if (password) {
@@ -151,6 +183,7 @@ const updateUser = async (req, res) => {
                 address: true,
                 profilePic: true,
                 role: true,
+                isActive: true,
                 emailVerified: true,
                 paymentInstructions: true,
             },

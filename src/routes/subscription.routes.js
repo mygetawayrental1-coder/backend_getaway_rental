@@ -22,6 +22,7 @@ router.post('/validate-coupon', couponLimiter, optionalAuth, couponController.va
 router.post('/plans', authenticate, isAdmin, subscriptionController.createPlan);
 router.put('/plans/:id', authenticate, isAdmin, subscriptionController.updatePlan);
 router.delete('/plans/:id', authenticate, isAdmin, subscriptionController.deletePlan);
+router.post('/admin/users/:userId/subscriptions', authenticate, isAdmin, subscriptionController.adminAssignSubscription);
 
 // Owner routes - subscription management (ADMIN can subscribe for testing)
 router.post('/', authenticate, requireRole(ROLES.OWNER, ROLES.ADMIN), subscriptionController.subscribe);
