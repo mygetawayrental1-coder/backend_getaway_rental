@@ -1,6 +1,7 @@
 const prisma = require('../config/database');
 const { getPagination, formatPaginatedResponse } = require('../utils/helpers');
 const { formatNotification, parseUnreadOnly } = require('../services/notification.service');
+const { sendBroadcastEmail } = require('../services/email.service');
 
 /**
  * GET /notifications
@@ -155,9 +156,85 @@ const markRead = async (req, res) => {
     }
 };
 
+/**
+ * POST /admin/notifications/broadcast
+ * Broadcasts a message to owners, users, or all.
+ */
+const broadcastNotification = async (req, res) => {
+    try {
+        const { targetAudience, channels, subject, message } = req.body;
+        
+        if (!targetAudience || !channels || !subject || !message) {
+            return res.status(400).json({ success: false, message: 'Missing required fields.' });
+        }
+
+        let where = {};
+        if (targetAudience === 'OWNERS') where.role = 'OWNER';
+        if (targetAudience === 'END_USERS') where.role = 'END_USER';
+        // 'ALL' means no role filter, but we typically exclude ADMIN unless 'ALL' explicitly
+        if (targetAudience === 'ALL') {
+            where.role = { not: 'ADMIN' }; // Don't broadcast to yourself by default
+        }
+
+        const users = await prisma.user.findMany({
+            where,
+            select: { id: true, email: true, role: true }
+        });
+
+        if (users.length === 0) {
+            return res.status(404).json({ success: false, message: 'No users found for this audience.' });
+        }
+
+        const isDashboard = channels.includes('dashboard');
+        const isEmail = channels.includes('email');
+
+        // Create Dashboard Notifications (skip END_USERs)
+        if (isDashboard) {
+            const dashboardUsers = targetAudience === 'END_USERS' 
+                ? [] 
+                : users.filter(u => u.role !== 'END_USER');
+                
+            if (dashboardUsers.length > 0) {
+                const notificationsData = dashboardUsers.map(u => ({
+                    userId: u.id,
+                    type: 'SYSTEM_ALERT',
+                    title: subject,
+                    body: message,
+                    isRead: false
+                }));
+                await prisma.notification.createMany({ data: notificationsData });
+            }
+        }
+
+        // Send Emails in batches of 50
+        if (isEmail) {
+            const emails = users.map(u => u.email);
+            const BATCH_SIZE = 50;
+            
+            // Fire and forget
+            (async () => {
+                for (let i = 0; i < emails.length; i += BATCH_SIZE) {
+                    const batch = emails.slice(i, i + BATCH_SIZE);
+                    try {
+                        await sendBroadcastEmail(batch, subject, message);
+                    } catch (e) {
+                        console.error('Batch email error:', e);
+                    }
+                }
+            })();
+        }
+
+        res.json({ success: true, message: `Broadcast successfully sent to ${users.length} users.` });
+    } catch (error) {
+        console.error('Broadcast error:', error);
+        res.status(500).json({ success: false, message: 'Failed to send broadcast.' });
+    }
+};
+
 module.exports = {
     getNotifications,
     getUnreadCount,
     markAllRead,
     markRead,
+    broadcastNotification,
 };

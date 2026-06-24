@@ -23,7 +23,7 @@ const transporter = nodemailer.createTransport({
 const FROM_EMAIL = process.env.BREVO_FROM_EMAIL || 'noreply@example.com';
 const FROM_NAME = process.env.BREVO_FROM_NAME || 'MyGetawayRental';
 
-const sendEmail = async ({ to, subject, html, text }) => {
+const sendEmail = async ({ to, bcc, subject, html, text }) => {
   if (!brevoConfigured) {
     throw new Error('Brevo SMTP is not configured.');
   }
@@ -31,6 +31,7 @@ const sendEmail = async ({ to, subject, html, text }) => {
     const mailOptions = {
       from: `"${FROM_NAME}" <${FROM_EMAIL}>`,
       to: Array.isArray(to) ? to.join(', ') : to,
+      ...(bcc && { bcc: Array.isArray(bcc) ? bcc.join(', ') : bcc }),
       subject: subject,
       text: text,
       html: html,
@@ -516,6 +517,39 @@ const sendInvoiceEmail = async (guestEmail, booking, payments) => {
   });
 };
 
+const sendBroadcastEmail = async (emailAddresses, subject, messageBody) => {
+  const html = `
+    <div style="font-family: 'Inter', Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b;">
+      <div style="background-color: #4f46e5; padding: 24px; text-align: center; border-top-left-radius: 8px; border-top-right-radius: 8px;">
+        <h1 style="color: #ffffff; margin: 0; font-size: 24px;">MyGetawayRental</h1>
+      </div>
+      <div style="padding: 32px; background-color: #ffffff; border: 1px solid #e2e8f0; border-top: none; border-bottom-left-radius: 8px; border-bottom-right-radius: 8px;">
+        <h2 style="color: #0f172a; margin-top: 0;">${subject}</h2>
+        <div style="color: #334155; line-height: 1.6; white-space: pre-wrap;">${messageBody}</div>
+        <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 32px 0;" />
+        <p style="margin: 0; color: #64748b; font-size: 14px;">Best regards,<br><strong>The MyGetawayRental Team</strong></p>
+      </div>
+      <div style="text-align: center; margin-top: 16px; color: #94a3b8; font-size: 12px;">
+        <p>You are receiving this email because you are registered on MyGetawayRental.</p>
+      </div>
+    </div>
+  `;
+
+  // We can pass an array of emails to the 'to' field. Brevo will BCC them if we format it properly,
+  // or we can just send it as 'bcc' to avoid exposing emails to everyone.
+  // Actually, to be safe, we will use 'bcc' for mass broadcasts and a generic 'to'.
+  
+  return sendEmail({
+    to: '"MyGetawayRental Members" <noreply@mygetawayrental.com>', // Masked To
+    bcc: emailAddresses,
+    subject: subject,
+    html,
+    text: messageBody,
+  }).catch(err => {
+    console.error("Error sending broadcast email batch:", err);
+  });
+};
+
 module.exports = {
   sendEmail,
   sendVerificationEmail,
@@ -533,4 +567,5 @@ module.exports = {
   sendPaymentPendingEmail,
   sendPaymentConfirmationEmail,
   sendInvoiceEmail,
+  sendBroadcastEmail,
 };

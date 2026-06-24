@@ -35,10 +35,9 @@ const getAllUsers = async (req, res) => {
                     profilePic: true,
                     role: true,
                     isActive: true,
-                    emailVerified: true,
                     createdAt: true,
                     _count: {
-                        select: { properties: true, inquiries: true },
+                        select: { ownedProperties: true, inquiries: true },
                     },
                     subscriptions: {
                         where: {
@@ -109,10 +108,9 @@ const getUserById = async (req, res) => {
                 address: true,
                 profilePic: true,
                 role: true,
-                emailVerified: true,
                 createdAt: true,
                 _count: {
-                    select: { properties: true, inquiries: true, subscriptions: true },
+                    select: { ownedProperties: true, inquiries: true, subscriptions: true },
                 },
             },
         });
@@ -184,7 +182,6 @@ const updateUser = async (req, res) => {
                 profilePic: true,
                 role: true,
                 isActive: true,
-                emailVerified: true,
                 paymentInstructions: true,
             },
         });
@@ -268,7 +265,7 @@ const getAllOwners = async (req, res) => {
                     role: true,
                     createdAt: true,
                     _count: {
-                        select: { properties: true },
+                        select: { ownedProperties: true },
                     },
                     subscriptions: {
                         where: {
@@ -349,7 +346,7 @@ const getOwnerById = async (req, res) => {
                     },
                 },
                 _count: {
-                    select: { properties: true },
+                    select: { ownedProperties: true },
                 },
             },
         });
