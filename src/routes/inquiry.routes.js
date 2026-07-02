@@ -7,9 +7,8 @@ const { requireRole, isAdmin, isAdminOrOwner, ROLES } = require('../middleware/r
 // Create inquiry (public with optional auth)
 router.post('/create', optionalAuth, inquiryController.createInquiry);
 
-// Admin only
-router.get('/fetch-all', authenticate, isAdmin, inquiryController.getAllInquiries);
-router.delete('/:id', authenticate, isAdmin, inquiryController.deleteInquiry);
+// Admin only — inquiry moderation removed intentionally.
+// Guest booking requests are scoped to property owners only.
 
 // Owner routes
 router.get('/fetch-inquiry-emailId/:email', authenticate, requireRole(ROLES.OWNER, ROLES.ADMIN), inquiryController.getInquiriesByEmail);

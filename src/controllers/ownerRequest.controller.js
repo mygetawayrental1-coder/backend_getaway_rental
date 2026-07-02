@@ -77,6 +77,48 @@ const createCustomPricingRequest = async (req, res) => {
     }
 };
 
+// Create custom pricing request for GUEST (no auth required)
+const createGuestCustomPricingRequest = async (req, res) => {
+    try {
+        const { requestedPrice, numProperties, message, phone, captchaId, captchaCode, selectedPlanName, name, email } = req.body;
+
+        if (!name || !email) {
+            return res.status(400).json({ success: false, message: 'Name and email are required.' });
+        }
+
+        if (!requestedPrice || !numProperties || !phone || !selectedPlanName) {
+            return res.status(400).json({ success: false, message: 'Please fill in all required fields.' });
+        }
+
+        if (!verifyCaptcha(captchaId, captchaCode)) {
+            console.warn(`[GuestCustomPricing] Captcha verification failed for ID: ${captchaId}`);
+            return res.status(400).json({ success: false, message: 'Invalid or expired captcha.' });
+        }
+
+        // Dispatch emails asynchronously — no DB record (no linked user)
+        Promise.all([
+            sendCustomPricingOwnerConfirmation(email, name, selectedPlanName),
+            sendCustomPricingAdminNotification(
+                name,
+                email,
+                selectedPlanName,
+                requestedPrice,
+                phone,
+                message,
+                numProperties
+            )
+        ]).catch(err => console.error('[GuestCustomPricing] Email error:', err));
+
+        res.status(200).json({
+            success: true,
+            message: 'Your custom pricing request has been submitted. We will be in touch shortly.',
+        });
+    } catch (error) {
+        console.error('Guest custom pricing request error:', error);
+        res.status(500).json({ success: false, message: 'Failed to submit request.' });
+    }
+};
+
 // Create become-a-host application (web onboarding)
 const createBecomeOwnerRequest = async (req, res) => {
     try {
@@ -231,6 +273,7 @@ const updateRequestStatus = async (req, res) => {
 
 module.exports = {
     createCustomPricingRequest,
+    createGuestCustomPricingRequest,
     createBecomeOwnerRequest,
     getAllRequests,
     getMyRequests,

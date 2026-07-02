@@ -2,14 +2,15 @@ const express = require('express');
 const router = express.Router();
 const guestRequestController = require('../controllers/guestRequest.controller');
 const { authenticate } = require('../middleware/auth');
+const { requireRole, ROLES } = require('../middleware/roles');
 
 // PUBLIC route - guests can submit requests without auth
 router.post('/', guestRequestController.createGuestRequest);
 
-// PROTECTED routes - require authentication
-router.get('/my', authenticate, guestRequestController.getOwnerGuestRequests);
-router.get('/:id', authenticate, guestRequestController.getGuestRequestById);
-router.patch('/:id/status', authenticate, guestRequestController.updateGuestRequestStatus);
-router.delete('/:id', authenticate, guestRequestController.deleteGuestRequest);
+// OWNER-only routes — guest booking requests belong to the property owner, not the admin.
+router.get('/my', authenticate, requireRole(ROLES.OWNER), guestRequestController.getOwnerGuestRequests);
+router.get('/:id', authenticate, requireRole(ROLES.OWNER), guestRequestController.getGuestRequestById);
+router.patch('/:id/status', authenticate, requireRole(ROLES.OWNER), guestRequestController.updateGuestRequestStatus);
+router.delete('/:id', authenticate, requireRole(ROLES.OWNER), guestRequestController.deleteGuestRequest);
 
 module.exports = router;
