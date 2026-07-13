@@ -271,7 +271,15 @@ const updateGuestRequestStatus = async (req, res) => {
                     select: {
                         propertyName: true,
                         nightlyRate: true,
-                        owner: { select: { id: true } },
+                        owner: {
+                            select: {
+                                id: true,
+                                email: true,
+                                firstName: true,
+                                lastName: true,
+                                paymentInstructions: true,
+                            },
+                        },
                     },
                 },
             },
@@ -309,12 +317,6 @@ const updateGuestRequestStatus = async (req, res) => {
         };
 
         if (status === 'ACCEPTED' && previousStatus !== 'ACCEPTED') {
-            try {
-                await sendGuestRequestAcceptedToGuest(request.email, mailData);
-            } catch (emailError) {
-                console.error('Acceptance email failed:', emailError.message);
-            }
-
             // Automatically create a CONFIRMED booking to block the calendar dates
             if (request.checkin && request.checkout) {
                 try {
@@ -341,6 +343,16 @@ const updateGuestRequestStatus = async (req, res) => {
                 } catch (bookingErr) {
                     console.error('Failed to create booking from guest request:', bookingErr.message);
                 }
+            }
+
+            try {
+                await sendGuestRequestAcceptedToGuest(
+                    request.email,
+                    mailData,
+                    request.property.owner,
+                );
+            } catch (emailError) {
+                console.error('Acceptance email failed:', emailError.message);
             }
         }
 

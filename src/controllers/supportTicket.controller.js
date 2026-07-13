@@ -8,19 +8,87 @@ const CATEGORIES = ['booking', 'payout', 'property', 'account', 'other'];
 const STATUSES = ['OPEN', 'IN_PROGRESS', 'RESOLVED', 'CLOSED'];
 const PRIORITIES = ['LOW', 'MEDIUM', 'HIGH', 'URGENT'];
 
+function getTicketOwnerSelect() {
+    return {
+        id: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        role: true,
+        countryCode: true,
+        phoneNumber: true,
+        address: true,
+        profilePic: true,
+        isActive: true,
+        createdAt: true,
+        ownedProperties: {
+            select: {
+                id: true,
+                propertyId: true,
+                propertyName: true,
+                location: true,
+                status: true,
+            },
+            orderBy: { createdAt: 'desc' },
+            take: 25,
+        },
+        subscriptions: {
+            where: {
+                status: 'ACTIVE',
+                endDate: { gt: new Date() },
+            },
+            take: 1,
+            orderBy: { endDate: 'desc' },
+            select: {
+                id: true,
+                status: true,
+                endDate: true,
+                startDate: true,
+                plan: {
+                    select: {
+                        id: true,
+                        name: true,
+                        maxProperties: true,
+                        duration: true,
+                    },
+                },
+            },
+        },
+    };
+}
+
+function shapeTicketOwner(user) {
+    if (!user) return null;
+    const { ownedProperties = [], subscriptions = [], ...rest } = user;
+    const activeSub = subscriptions[0] || null;
+    return {
+        ...rest,
+        fullName: [rest.firstName, rest.lastName].filter(Boolean).join(' ').trim() || rest.email,
+        phone:
+            rest.phoneNumber
+                ? `${rest.countryCode ? `${rest.countryCode} ` : ''}${rest.phoneNumber}`.trim()
+                : null,
+        properties: ownedProperties,
+        propertyCount: ownedProperties.length,
+        subscription: activeSub
+            ? {
+                  id: activeSub.id,
+                  status: activeSub.status,
+                  startDate: activeSub.startDate,
+                  endDate: activeSub.endDate,
+                  planName: activeSub.plan?.name || null,
+                  maxProperties: activeSub.plan?.maxProperties ?? null,
+                  duration: activeSub.plan?.duration || null,
+              }
+            : null,
+    };
+}
+
 async function findTicketByParam(id) {
     return prisma.supportTicket.findFirst({
         where: { OR: [{ id }, { ticketId: id }] },
         include: {
-            user: {
-                select: {
-                    id: true,
-                    email: true,
-                    firstName: true,
-                    lastName: true,
-                    role: true,
-                },
-            },
+            user: { select: getTicketOwnerSelect() },
         },
     });
 }
@@ -180,7 +248,7 @@ const getTicketById = async (req, res) => {
             success: true,
             data: {
                 ...ticketData,
-                user: req.user.role === ROLES.ADMIN ? user : undefined,
+                user: req.user.role === ROLES.ADMIN ? shapeTicketOwner(user) : undefined,
                 replies,
             },
         });
@@ -196,8 +264,10 @@ const getTicketById = async (req, res) => {
 const replyToTicket = async (req, res) => {
     try {
         const { content, captchaId, captchaCode } = req.body;
+        const isAdmin = req.user.role === ROLES.ADMIN;
 
-        if (!(await verifyCaptcha(captchaId, captchaCode))) {
+        // Owners must pass captcha; admins reply from the portal without it.
+        if (!isAdmin && !(await verifyCaptcha(captchaId, captchaCode))) {
             return res.status(400).json({ success: false, message: 'Invalid or expired security code.' });
         }
 
@@ -210,7 +280,6 @@ const replyToTicket = async (req, res) => {
             return res.status(404).json({ success: false, message: 'Ticket not found.' });
         }
 
-        const isAdmin = req.user.role === ROLES.ADMIN;
         if (!isAdmin && ticket.userId !== req.user.id) {
             return res.status(403).json({ success: false, message: 'Access denied.' });
         }
@@ -342,23 +411,16 @@ const getAllTickets = async (req, res) => {
                 take: pagination.take,
                 orderBy: { createdAt: 'desc' },
                 include: {
-                    user: {
-                        select: {
-                            id: true,
-                            email: true,
-                            firstName: true,
-                            lastName: true,
-                            role: true,
-                        },
-                    },
+                    user: { select: getTicketOwnerSelect() },
                     _count: { select: { replies: true } },
                 },
             }),
             prisma.supportTicket.count({ where }),
         ]);
 
-        const data = rows.map(({ _count, ...ticket }) => ({
+        const data = rows.map(({ _count, user, ...ticket }) => ({
             ...ticket,
+            user: shapeTicketOwner(user),
             replyCount: _count.replies,
         }));
 

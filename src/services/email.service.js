@@ -316,18 +316,76 @@ const sendGuestRequestConfirmationToGuest = async (guestEmail, request) => {
   });
 };
 
-const sendGuestRequestAcceptedToGuest = async (guestEmail, request) => {
+function buildPaymentInstructionsBlocks(owner) {
+  let instructionsHtml = '<p>Please contact the owner for payment instructions.</p>';
+  let instructionsText = 'Please contact the owner for payment instructions.';
+
+  if (!owner?.paymentInstructions) {
+    return { instructionsHtml, instructionsText };
+  }
+
+  try {
+    const parsed = JSON.parse(owner.paymentInstructions);
+
+    const titles = {
+      cards: 'Credit & Debit Cards',
+      wallets: 'Digital Wallets',
+      p2p: 'P2P Apps (Venmo, Zelle, CashApp)',
+      bank: 'Bank Transfers',
+      bnpl: 'Buy Now, Pay Later',
+      cash: 'Cash',
+    };
+
+    const enabled = Object.entries(parsed).filter(
+      ([, config]) => config?.enabled && String(config.info || '').trim(),
+    );
+
+    if (enabled.length > 0) {
+      instructionsHtml = enabled
+        .map(([key, config]) => {
+          const title = titles[key] || 'Other';
+          return `
+            <div style="margin-bottom: 12px;">
+              <strong style="display: block; color: #1e293b; margin-bottom: 4px;">${title}</strong>
+              <div style="white-space: pre-wrap; color: #475569;">${config.info}</div>
+            </div>
+          `;
+        })
+        .join('');
+      instructionsText = enabled
+        .map(([key, config]) => `${titles[key] || 'Other'}:\n${config.info}`)
+        .join('\n\n');
+    } else {
+      instructionsHtml =
+        '<p>The owner has not specified any payment methods. Please contact them directly.</p>';
+      instructionsText =
+        'The owner has not specified any payment methods. Please contact them directly.';
+    }
+  } catch {
+    instructionsHtml = `<div style="white-space: pre-wrap;">${owner.paymentInstructions}</div>`;
+    instructionsText = owner.paymentInstructions;
+  }
+
+  return { instructionsHtml, instructionsText };
+}
+
+const sendGuestRequestAcceptedToGuest = async (guestEmail, request, owner = null) => {
+  const { instructionsHtml, instructionsText } = buildPaymentInstructionsBlocks(owner);
   const html = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-      <h2 style="color: #22c55e;">Request accepted</h2>
+      <h2 style="color: #22c55e;">Booking confirmed</h2>
       <p>Hi ${request.fullName},</p>
-      <p>Good news — the owner accepted your rental request for <strong>${request.propertyName}</strong>.</p>
+      <p>Good news — the owner confirmed your rental for <strong>${request.propertyName}</strong>.</p>
       <div style="background-color: #f0fdf4; padding: 16px; border-radius: 8px; margin: 16px 0;">
         <p><strong>Check-in:</strong> ${formatRequestDate(request.checkin)}</p>
         <p><strong>Check-out:</strong> ${formatRequestDate(request.checkout)}</p>
         <p><strong>Guests:</strong> ${request.guests || 1}</p>
       </div>
-      <p>The owner may contact you directly to finalize details. If you have questions, reply to this email.</p>
+      <h3 style="color: #0f172a;">How to pay</h3>
+      <div style="background-color: #fff8e1; padding: 16px; border-radius: 8px; border-left: 4px solid #f59e0b; margin: 16px 0;">
+        ${instructionsHtml}
+      </div>
+      <p>Once you pay, the owner will confirm receipt. Reply to this email if you have questions.</p>
     </div>
   `;
 
@@ -335,7 +393,7 @@ const sendGuestRequestAcceptedToGuest = async (guestEmail, request) => {
     to: guestEmail,
     subject: `Confirmed — ${request.propertyName}`,
     html,
-    text: `Your rental request for ${request.propertyName} was accepted by the owner.`,
+    text: `Your rental for ${request.propertyName} was confirmed.\n\nPayment instructions:\n\n${instructionsText}`,
   });
 };
 
@@ -424,49 +482,7 @@ const sendInquiryRejectedNotification = async (guestEmail, inquiry) => {
 };
 
 const sendPaymentPendingEmail = async (guestEmail, booking, owner) => {
-  let instructionsHtml = '<p>Please contact the owner for payment instructions.</p>';
-  let instructionsText = 'Please contact the owner for payment instructions.';
-
-  if (owner.paymentInstructions) {
-    try {
-      const parsed = JSON.parse(owner.paymentInstructions);
-      
-      const titles = {
-        cards: '💳 Credit & Debit Cards',
-        wallets: '📱 Digital Wallets',
-        p2p: '💸 P2P Apps (Venmo, Zelle, CashApp)',
-        bank: '🏦 Bank Transfers',
-        bnpl: '🛍️ Buy Now, Pay Later',
-        cash: '💵 Cash'
-      };
-
-      const parts = Object.entries(parsed)
-        .filter(([_, config]) => config.enabled && config.info.trim())
-        .map(([key, config]) => {
-          const title = titles[key] || 'Other';
-          return `
-            <div style="margin-bottom: 12px;">
-              <strong style="display: block; color: #1e293b; margin-bottom: 4px;">${title}</strong>
-              <div style="white-space: pre-wrap; color: #475569;">${config.info}</div>
-            </div>
-          `;
-        });
-
-      if (parts.length > 0) {
-        instructionsHtml = parts.join('');
-        instructionsText = Object.entries(parsed)
-          .filter(([_, config]) => config.enabled && config.info.trim())
-          .map(([key, config]) => `${titles[key] || 'Other'}:\n${config.info}`)
-          .join('\n\n');
-      } else {
-        instructionsHtml = '<p>The owner has not specified any payment methods. Please contact them directly.</p>';
-        instructionsText = 'The owner has not specified any payment methods. Please contact them directly.';
-      }
-    } catch (e) {
-      instructionsHtml = `<div style="white-space: pre-wrap;">${owner.paymentInstructions}</div>`;
-      instructionsText = owner.paymentInstructions;
-    }
-  }
+  const { instructionsHtml, instructionsText } = buildPaymentInstructionsBlocks(owner);
 
   const html = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
