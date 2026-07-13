@@ -117,6 +117,7 @@ const getMe = async (req, res) => {
                 about: true,
                 role: true,
                 isActive: true,
+                paymentInstructions: true,
                 createdAt: true,
             },
         });

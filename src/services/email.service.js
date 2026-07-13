@@ -62,7 +62,14 @@ async function sendViaBrevoApi({ to, bcc, subject, html, text }) {
     throw new Error(msg);
   }
 
-  console.log('Email sent via Brevo API:', data.messageId || data.messageIds || 'ok');
+  console.log(
+    'Email sent via Brevo API:',
+    data.messageId || data.messageIds || 'ok',
+    '| to:',
+    toAddressList(to).map((x) => x.email).join(', '),
+    '| from:',
+    FROM_EMAIL,
+  );
   return data;
 }
 

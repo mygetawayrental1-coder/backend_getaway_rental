@@ -31,15 +31,20 @@ const generateSVG = (text) => {
 
 const createCaptcha = async (req, res) => {
     try {
-        const text = Math.random().toString(36).substring(2, 8).toUpperCase();
+        // Unambiguous characters for mobile readability
+        const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+        let code = '';
+        for (let i = 0; i < 6; i++) {
+            code += chars[Math.floor(Math.random() * chars.length)];
+        }
         const id = uuidv4();
 
         captchaStore.set(id, {
-            text,
+            text: code,
             expires: Date.now() + 5 * 60 * 1000 // 5 minutes
         });
 
-        const imageBase64 = `data:image/svg+xml;base64,${generateSVG(text)}`;
+        const imageBase64 = `data:image/svg+xml;base64,${generateSVG(code)}`;
 
         res.json({
             success: true,
