@@ -2,7 +2,6 @@ const prisma = require('../config/database');
 const { getPagination, formatPaginatedResponse } = require('../utils/helpers');
 const { verifyCaptcha } = require('./captcha.controller');
 const {
-    createNotification,
     createTypedNotification,
     NOTIFICATION_TYPES,
 } = require('../services/notification.service');
@@ -33,8 +32,12 @@ async function findReviewById(id) {
     });
 }
 
+function assertPropertyOwner(review, userId) {
+    return review?.property?.ownerId === userId;
+}
+
 /**
- * POST /reviews/:id/reply
+ * POST /reviews/:id/reply — property owner only
  */
 const replyToReview = async (req, res) => {
     try {
@@ -57,7 +60,7 @@ const replyToReview = async (req, res) => {
             return res.status(404).json({ success: false, message: 'Review not found.' });
         }
 
-        if (review.property.ownerId !== req.user.id) {
+        if (!assertPropertyOwner(review, req.user.id)) {
             return res.status(403).json({ success: false, message: 'Access denied.' });
         }
 
@@ -94,9 +97,54 @@ const replyToReview = async (req, res) => {
 };
 
 /**
- * PATCH /reviews/:id/approve
+ * PATCH /reviews/:id/visibility
+ * Body: { published: true | false }
+ * Owner publishes (shows on property page) or hides the review.
  */
-const approveReview = async (req, res) => {
+const setReviewVisibility = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const published = req.body?.published;
+
+        if (typeof published !== 'boolean') {
+            return res.status(400).json({
+                success: false,
+                message: 'published (boolean) is required.',
+            });
+        }
+
+        const review = await findReviewById(id);
+        if (!review) {
+            return res.status(404).json({ success: false, message: 'Review not found.' });
+        }
+
+        if (!assertPropertyOwner(review, req.user.id)) {
+            return res.status(403).json({ success: false, message: 'Access denied.' });
+        }
+
+        const updated = await prisma.review.update({
+            where: { id: review.id },
+            data: { isApproved: published },
+            include: reviewInclude,
+        });
+
+        res.json({
+            success: true,
+            message: published
+                ? 'Review is now visible on the property page.'
+                : 'Review hidden from the property page.',
+            review: updated,
+        });
+    } catch (error) {
+        console.error('Set review visibility error:', error);
+        res.status(500).json({ success: false, message: 'Failed to update review visibility.' });
+    }
+};
+
+/**
+ * DELETE /reviews/:id — property owner only
+ */
+const deleteReview = async (req, res) => {
     try {
         const { id } = req.params;
 
@@ -105,100 +153,38 @@ const approveReview = async (req, res) => {
             return res.status(404).json({ success: false, message: 'Review not found.' });
         }
 
-        const updated = await prisma.review.update({
-            where: { id: review.id },
-            data: { isApproved: true },
-            include: reviewInclude,
-        });
-
-        try {
-            await createNotification({
-                userId: review.property.ownerId,
-                type: NOTIFICATION_TYPES.REVIEW_NEW,
-                title: `New review approved for ${review.property.propertyName}`,
-                body: `A new review has been approved for ${review.property.propertyName}.`,
-                data: {
-                    reviewId: review.id,
-                    propertyId: review.propertyId,
-                },
-            });
-        } catch (notifyErr) {
-            console.error('Review approve notification error:', notifyErr);
-        }
-
-        res.json({ success: true, review: updated });
-    } catch (error) {
-        console.error('Approve review error:', error);
-        res.status(500).json({ success: false, message: 'Failed to approve review.' });
-    }
-};
-
-/**
- * DELETE /reviews/:id
- */
-const rejectReview = async (req, res) => {
-    try {
-        const { id } = req.params;
-
-        const review = await prisma.review.findUnique({ where: { id } });
-        if (!review) {
-            return res.status(404).json({ success: false, message: 'Review not found.' });
+        if (!assertPropertyOwner(review, req.user.id)) {
+            return res.status(403).json({ success: false, message: 'Access denied.' });
         }
 
         await prisma.review.delete({ where: { id: review.id } });
 
-        res.json({ success: true });
+        res.json({ success: true, message: 'Review deleted.' });
     } catch (error) {
-        console.error('Reject review error:', error);
+        console.error('Delete review error:', error);
         res.status(500).json({ success: false, message: 'Failed to delete review.' });
     }
 };
 
 /**
- * GET /reviews/pending
- */
-const getAllReviewsForModeration = async (req, res) => {
-    try {
-        const { page, limit, skip } = getPagination(req.query.page, req.query.limit);
-
-        const where = { isApproved: false };
-
-        const [reviews, total] = await Promise.all([
-            prisma.review.findMany({
-                where,
-                include: reviewInclude,
-                orderBy: { createdAt: 'desc' },
-                skip,
-                take: limit,
-            }),
-            prisma.review.count({ where }),
-        ]);
-
-        res.json({
-            success: true,
-            ...formatPaginatedResponse(reviews, total, page, limit),
-        });
-    } catch (error) {
-        console.error('Get pending reviews error:', error);
-        res.status(500).json({ success: false, message: 'Failed to fetch pending reviews.' });
-    }
-};
-
-/**
  * GET /reviews/my-properties
+ * All reviews for the owner's properties (pending + published).
+ * Query: status=published | hidden | all (default all)
  */
 const getMyPropertyReviews = async (req, res) => {
     try {
-        const { propertyId } = req.query;
+        const { propertyId, status } = req.query;
         const { page, limit, skip } = getPagination(req.query.page, req.query.limit);
 
         const where = {
-            isApproved: true,
             property: {
                 ownerId: req.user.id,
                 ...(propertyId ? { OR: [{ id: propertyId }, { propertyId }] } : {}),
             },
         };
+
+        if (status === 'published') where.isApproved = true;
+        else if (status === 'hidden') where.isApproved = false;
 
         const [reviews, total] = await Promise.all([
             prisma.review.findMany({
@@ -221,41 +207,9 @@ const getMyPropertyReviews = async (req, res) => {
     }
 };
 
-/**
- * GET /reviews/approved
- */
-const getApprovedReviews = async (req, res) => {
-    try {
-        const { page, limit, skip } = getPagination(req.query.page, req.query.limit);
-
-        const where = { isApproved: true };
-
-        const [reviews, total] = await Promise.all([
-            prisma.review.findMany({
-                where,
-                include: reviewInclude,
-                orderBy: { createdAt: 'desc' },
-                skip,
-                take: limit,
-            }),
-            prisma.review.count({ where }),
-        ]);
-
-        res.json({
-            success: true,
-            ...formatPaginatedResponse(reviews, total, page, limit),
-        });
-    } catch (error) {
-        console.error('Get approved reviews error:', error);
-        res.status(500).json({ success: false, message: 'Failed to fetch approved reviews.' });
-    }
-};
-
 module.exports = {
     replyToReview,
-    approveReview,
-    rejectReview,
-    getAllReviewsForModeration,
-    getApprovedReviews,
+    setReviewVisibility,
+    deleteReview,
     getMyPropertyReviews,
 };

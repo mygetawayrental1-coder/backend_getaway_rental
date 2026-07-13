@@ -330,15 +330,18 @@ const getOwnerById = async (req, res) => {
                 address: true,
                 profilePic: true,
                 createdAt: true,
-                properties: {
+                ownedProperties: {
                     orderBy: { createdAt: 'desc' },
                     select: {
                         id: true,
                         propertyId: true,
                         propertyName: true,
                         location: true,
+                        state: true,
                         status: true,
                         nightlyRate: true,
+                        bedrooms: true,
+                        bathrooms: true,
                         createdAt: true,
                         _count: {
                             select: { inquiries: true },

@@ -2,20 +2,9 @@ const express = require('express');
 const router = express.Router();
 const reviewController = require('../controllers/review.controller');
 const { authenticate } = require('../middleware/auth');
-const { requireAdmin, requireOwner } = require('../middleware/roles');
+const { requireOwner } = require('../middleware/roles');
 
-router.get(
-    '/pending',
-    authenticate,
-    requireAdmin,
-    reviewController.getAllReviewsForModeration,
-);
-router.get(
-    '/approved',
-    authenticate,
-    requireAdmin,
-    reviewController.getApprovedReviews,
-);
+// Owner-only — reviews belong to the property owner, not the admin.
 router.get(
     '/my-properties',
     authenticate,
@@ -29,16 +18,16 @@ router.post(
     reviewController.replyToReview,
 );
 router.patch(
-    '/:id/approve',
+    '/:id/visibility',
     authenticate,
-    requireAdmin,
-    reviewController.approveReview,
+    requireOwner,
+    reviewController.setReviewVisibility,
 );
 router.delete(
     '/:id',
     authenticate,
-    requireAdmin,
-    reviewController.rejectReview,
+    requireOwner,
+    reviewController.deleteReview,
 );
 
 module.exports = router;

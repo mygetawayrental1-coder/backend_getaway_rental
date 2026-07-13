@@ -146,6 +146,7 @@ async function getOwnerStats(ownerId) {
     const bookingWhere = { property: propertyWhere };
     const inquiryWhere = { property: propertyWhere };
     const reviewWhere = { property: propertyWhere, isApproved: true };
+    const pendingReviewWhere = { property: propertyWhere, isApproved: false };
 
     const now = new Date();
     const thisMonth = monthRange(now.getFullYear(), now.getMonth());
@@ -175,11 +176,12 @@ async function getOwnerStats(ownerId) {
         prisma.guestRequest.count({ where: { property: propertyWhere, status: 'NEW' } }),
         prisma.guestRequest.count({ where: { property: propertyWhere, status: 'ACCEPTED' } }),
         prisma.review.aggregate({ where: reviewWhere, _count: { id: true }, _avg: { overallRating: true } }),
+        prisma.review.count({ where: pendingReviewWhere }),
         prisma.payout.aggregate({ where: { ownerId, status: { in: ['PENDING', 'PROCESSING'] } }, _sum: { amount: true } }),
         prisma.payout.aggregate({ where: { ownerId, status: 'PAID' }, _sum: { amount: true } }),
         prisma.notification.count({ where: { userId: ownerId, isRead: false } }),
     ]);
-    const [totalGuestRequests, pendingGuestRequests, acceptedGuestRequests, reviewAgg, pendingPayoutAgg, totalPaidAgg, unreadNotifications] = batch3;
+    const [totalGuestRequests, pendingGuestRequests, acceptedGuestRequests, reviewAgg, pendingReviews, pendingPayoutAgg, totalPaidAgg, unreadNotifications] = batch3;
 
     const totalEarnings = roundMoney(totalRevenueAgg._sum.totalAmount);
     const pendingPayouts = roundMoney(pendingPayoutAgg._sum.amount);
@@ -215,6 +217,7 @@ async function getOwnerStats(ownerId) {
         },
         reviews: {
             total: reviewAgg._count.id,
+            pending: pendingReviews,
             averageRating: reviewAgg._avg.overallRating
                 ? roundMoney(reviewAgg._avg.overallRating)
                 : 0,

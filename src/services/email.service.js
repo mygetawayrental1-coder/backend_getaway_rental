@@ -1,47 +1,96 @@
 const nodemailer = require('nodemailer');
 
-const brevoConfigured = Boolean(process.env.BREVO_SMTP_USER && process.env.BREVO_SMTP_PASS);
-
-if (!brevoConfigured) {
-  console.warn(
-    '[email] BREVO_SMTP_USER and BREVO_SMTP_PASS must be set in .env — outbound email is disabled.',
-  );
-}
-
-const transporter = nodemailer.createTransport({
-  host: process.env.BREVO_SMTP_HOST || 'smtp-relay.brevo.com',
-  port: Number(process.env.BREVO_SMTP_PORT) || 587,
-  secure: false,
-  auth: brevoConfigured
-    ? {
-        user: process.env.BREVO_SMTP_USER,
-        pass: process.env.BREVO_SMTP_PASS,
-      }
-    : undefined,
-});
-
 const FROM_EMAIL = process.env.BREVO_FROM_EMAIL || 'noreply@example.com';
 const FROM_NAME = process.env.BREVO_FROM_NAME || 'MyGetawayRental';
 
-const sendEmail = async ({ to, bcc, subject, html, text }) => {
-  if (!brevoConfigured) {
-    throw new Error('Brevo SMTP is not configured.');
-  }
-  try {
-    const mailOptions = {
-      from: `"${FROM_NAME}" <${FROM_EMAIL}>`,
-      to: Array.isArray(to) ? to.join(', ') : to,
-      ...(bcc && { bcc: Array.isArray(bcc) ? bcc.join(', ') : bcc }),
-      subject: subject,
-      text: text,
-      html: html,
-    };
+const brevoApiKey = process.env.BREVO_API_KEY || '';
+const smtpConfigured = Boolean(process.env.BREVO_SMTP_USER && process.env.BREVO_SMTP_PASS);
+const emailConfigured = Boolean(brevoApiKey || smtpConfigured);
 
-    const data = await transporter.sendMail(mailOptions);
-    console.log('Email sent via Brevo SMTP:', data.messageId);
-    return data;
+if (!emailConfigured) {
+  console.warn(
+    '[email] Set BREVO_API_KEY (recommended on Render) or BREVO_SMTP_USER + BREVO_SMTP_PASS — outbound email is disabled.',
+  );
+} else if (!brevoApiKey && smtpConfigured) {
+  console.warn(
+    '[email] Using SMTP only. On Render, SMTP often times out — set BREVO_API_KEY (Brevo → SMTP & API → API keys).',
+  );
+}
+
+const transporter = smtpConfigured
+  ? nodemailer.createTransport({
+      host: process.env.BREVO_SMTP_HOST || 'smtp-relay.brevo.com',
+      port: Number(process.env.BREVO_SMTP_PORT) || 587,
+      secure: false,
+      connectionTimeout: 15000,
+      auth: {
+        user: process.env.BREVO_SMTP_USER,
+        pass: process.env.BREVO_SMTP_PASS,
+      },
+    })
+  : null;
+
+function toAddressList(value) {
+  const list = Array.isArray(value) ? value : [value];
+  return list.filter(Boolean).map((email) => ({ email: String(email).trim() }));
+}
+
+/** Prefer Brevo HTTPS API — Render freestyle/starter often blocks outbound SMTP :587. */
+async function sendViaBrevoApi({ to, bcc, subject, html, text }) {
+  const payload = {
+    sender: { name: FROM_NAME, email: FROM_EMAIL },
+    to: toAddressList(to),
+    subject,
+    htmlContent: html,
+    ...(text ? { textContent: text } : {}),
+    ...(bcc ? { bcc: toAddressList(bcc) } : {}),
+  };
+
+  const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: {
+      accept: 'application/json',
+      'api-key': brevoApiKey,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const msg = data.message || data.error || `Brevo API ${res.status}`;
+    throw new Error(msg);
+  }
+
+  console.log('Email sent via Brevo API:', data.messageId || data.messageIds || 'ok');
+  return data;
+}
+
+async function sendViaSmtp({ to, bcc, subject, html, text }) {
+  const data = await transporter.sendMail({
+    from: `"${FROM_NAME}" <${FROM_EMAIL}>`,
+    to: Array.isArray(to) ? to.join(', ') : to,
+    ...(bcc && { bcc: Array.isArray(bcc) ? bcc.join(', ') : bcc }),
+    subject,
+    text,
+    html,
+  });
+  console.log('Email sent via Brevo SMTP:', data.messageId);
+  return data;
+}
+
+const sendEmail = async ({ to, bcc, subject, html, text }) => {
+  if (!emailConfigured) {
+    throw new Error('Brevo is not configured (need BREVO_API_KEY or SMTP credentials).');
+  }
+
+  try {
+    if (brevoApiKey) {
+      return await sendViaBrevoApi({ to, bcc, subject, html, text });
+    }
+    return await sendViaSmtp({ to, bcc, subject, html, text });
   } catch (error) {
-    console.error('Brevo SMTP email error:', error);
+    console.error('Brevo email error:', error.message || error);
     throw error;
   }
 };

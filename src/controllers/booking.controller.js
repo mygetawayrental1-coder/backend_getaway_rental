@@ -96,7 +96,7 @@ async function findBookingByParam(id) {
                     },
                 },
             },
-            payment: true,
+            payments: true,
         },
     });
 }
@@ -110,12 +110,19 @@ function formatPayment(payment) {
     };
 }
 
+function formatPayments(payments) {
+    if (!Array.isArray(payments)) return [];
+    return payments.map(formatPayment);
+}
+
 function formatBookingRow(booking, { includeOwnerNotes = false } = {}) {
-    const { property, payment, ...rest } = booking;
+    const { property, payments, payment, ...rest } = booking;
     if (!includeOwnerNotes) {
         delete rest.ownerNotes;
     }
     const images = parseJsonField(property?.images);
+    const paymentList = formatPayments(payments ?? (payment ? [payment] : []));
+    const latestPayment = paymentList.length > 0 ? paymentList[paymentList.length - 1] : null;
     return {
         ...rest,
         property: property
@@ -131,7 +138,9 @@ function formatBookingRow(booking, { includeOwnerNotes = false } = {}) {
                   owner: property.owner,
               }
             : undefined,
-        payment: formatPayment(payment),
+        payments: paymentList,
+        // Keep singular `payment` as latest record for older clients
+        payment: latestPayment,
     };
 }
 
@@ -405,7 +414,7 @@ const createBooking = async (req, res) => {
         res.status(201).json({
             success: true,
             message: 'Booking request submitted. The owner will confirm shortly.',
-            data: formatBookingRow({ ...booking, payment: null }),
+            data: formatBookingRow({ ...booking, payments: [] }),
         });
     } catch (error) {
         console.error('Create booking error:', error);
@@ -445,7 +454,7 @@ const getOwnerBookings = async (req, res) => {
                             images: true,
                         },
                     },
-                    payment: true,
+                    payments: true,
                 },
             }),
             prisma.booking.count({ where }),
@@ -504,7 +513,7 @@ const getAdminBookings = async (req, res) => {
                             },
                         },
                     },
-                    payment: true,
+                    payments: true,
                 },
             }),
             prisma.booking.count({ where }),
@@ -551,7 +560,7 @@ const getGuestBookings = async (req, res) => {
                             slug: true,
                         },
                     },
-                    payment: true,
+                    payments: true,
                 },
             }),
             prisma.booking.count({ where }),
@@ -634,7 +643,7 @@ const confirmBooking = async (req, res) => {
         const updated = await prisma.booking.update({
             where: { id: booking.id },
             data: { status: 'CONFIRMED', confirmedAt: new Date() },
-            include: { property: true, payment: true },
+            include: { property: true, payments: true },
         });
 
         try {
@@ -678,7 +687,7 @@ const markOngoing = async (req, res) => {
         const updated = await prisma.booking.update({
             where: { id: booking.id },
             data: { status: 'ONGOING', checkedInAt: new Date() },
-            include: { property: true, payment: true },
+            include: { property: true, payments: true },
         });
 
         try {
@@ -716,7 +725,7 @@ const completeBooking = async (req, res) => {
         const updated = await prisma.booking.update({
             where: { id: booking.id },
             data: { status: 'COMPLETED', completedAt: new Date() },
-            include: { property: true, payment: true },
+            include: { property: true, payments: true },
         });
 
         try {
@@ -780,7 +789,7 @@ const cancelBooking = async (req, res) => {
                 cancelledBy,
                 cancelReason: reason || null,
             },
-            include: { property: true, payment: true },
+            include: { property: true, payments: true },
         });
 
         try {
@@ -822,7 +831,7 @@ const updateOwnerNotes = async (req, res) => {
         const updated = await prisma.booking.update({
             where: { id: booking.id },
             data: { ownerNotes: ownerNotes != null ? String(ownerNotes) : null },
-            include: { property: true, payment: true },
+            include: { property: true, payments: true },
         });
 
         res.json({

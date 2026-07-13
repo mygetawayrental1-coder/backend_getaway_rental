@@ -6,6 +6,10 @@ const {
     buildLocationFilter,
     getPagination,
 } = require('../../utils/helpers');
+const {
+    createTypedNotification,
+    NOTIFICATION_TYPES,
+} = require('../../services/notification.service');
 
 async function enrichWithReviewStats(properties) {
     const ids = properties.map((p) => p.id);
@@ -398,6 +402,7 @@ exports.createReview = async (req, res) => {
 
         const property = await prisma.property.findFirst({
             where: { OR: [{ id }, { propertyId: id }] },
+            select: { id: true, propertyName: true, ownerId: true },
         });
         if (!property) {
             return res.status(404).json({ success: false, message: 'Property not found.' });
@@ -429,7 +434,30 @@ exports.createReview = async (req, res) => {
             },
         });
 
-        res.status(201).json({ success: true, review });
+        // Notify property owner only — owner decides whether to publish on the listing page.
+        try {
+            await createTypedNotification({
+                userId: property.ownerId,
+                type: NOTIFICATION_TYPES.REVIEW_NEW,
+                data: {
+                    reviewId: review.id,
+                    propertyId: property.id,
+                    propertyName: property.propertyName,
+                },
+                vars: {
+                    propertyName: property.propertyName,
+                    guestName: review.authorName,
+                },
+            });
+        } catch (notifyErr) {
+            console.error('Owner new-review notification error:', notifyErr.message);
+        }
+
+        res.status(201).json({
+            success: true,
+            message: 'Thanks — your review was sent to the property owner.',
+            review,
+        });
     } catch (error) {
         console.error('[web/properties] reviews post', error);
         res.status(500).json({ success: false, message: 'Failed to create review.' });

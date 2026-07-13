@@ -121,23 +121,13 @@ const getMe = async (req, res) => {
             },
         });
 
-        // Auto-bootstrap founder to ADMIN
-        let actualRole = user.role;
-        if (user.email === 'mdkabir3350@gmail.com' && actualRole !== 'ADMIN') {
-            await prisma.user.update({
-                where: { id: user.id },
-                data: { role: 'ADMIN' }
-            });
-            actualRole = 'ADMIN';
-        }
-
         const subscription = await getSubscriptionSummary(user.id);
 
         res.json({
             success: true,
             data: {
                 ...user,
-                role: actualRole === 'END_USER' ? 'OWNER' : actualRole,
+                role: user.role === 'END_USER' ? 'OWNER' : user.role,
                 ...subscription,
             },
         });
