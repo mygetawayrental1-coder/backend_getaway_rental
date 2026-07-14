@@ -97,6 +97,9 @@ model Property {
   latitude  String?
   longitude String?
   address   String? // full formatted address
+  /// Catalog destination (Admin Locations). Preferred over free-text matching.
+  locationId Int?
+  catalogLocation Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
 
   // Capacity
   guests    Int @default(1)
@@ -172,6 +175,7 @@ model Property {
   @@index([status])
   @@index([rentalType])
   @@index([location])
+  @@index([locationId])
   @@index([isFeatured])
   @@index([slug])
 }
@@ -774,6 +778,8 @@ model Location {
   isActive    Boolean  @default(true)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+
+  properties Property[]
 
   @@index([parentSlug])
   @@index([isActive])

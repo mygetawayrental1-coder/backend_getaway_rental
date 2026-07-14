@@ -4,6 +4,7 @@ const {
     formatPropertyResponse,
     formatPropertiesResponse,
     buildLocationFilter,
+    propertyWhereForCatalogLocation,
     getPagination,
 } = require('../../utils/helpers');
 const {
@@ -57,6 +58,8 @@ exports.searchProperties = async (req, res) => {
     try {
         const {
             location_name,
+            location_id,
+            location_slug,
             check_in,
             check_out,
             guests,
@@ -81,7 +84,30 @@ exports.searchProperties = async (req, res) => {
 
         const andConditions = [];
 
-        if (location_name) {
+        // Prefer catalog Location (FK). Keep location_name string fallback for old URLs/pages.
+        let catalogLoc = null;
+        if (location_id) {
+            const id = parseInt(String(location_id), 10);
+            if (!Number.isNaN(id)) {
+                catalogLoc = await prisma.location.findUnique({ where: { id } });
+            }
+        } else if (location_slug) {
+            catalogLoc = await prisma.location.findUnique({
+                where: { slug: String(location_slug).trim().toLowerCase() },
+            });
+        } else if (location_name) {
+            catalogLoc = await prisma.location.findFirst({
+                where: {
+                    isActive: true,
+                    name: { equals: String(location_name).trim(), mode: 'insensitive' },
+                },
+            });
+        }
+
+        if (catalogLoc) {
+            const locFilter = propertyWhereForCatalogLocation(catalogLoc, { activeOnly: false });
+            if (locFilter?.OR) andConditions.push({ OR: locFilter.OR });
+        } else if (location_name) {
             const locationFilter = buildLocationFilter(location_name);
             if (locationFilter) andConditions.push(locationFilter);
         }

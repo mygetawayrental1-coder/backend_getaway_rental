@@ -8,6 +8,7 @@ const {
     formatPropertiesResponse,
     getPagination,
     formatPaginatedResponse,
+    propertyWhereForCatalogLocation,
 } = require('../utils/helpers');
 
 const BLOCKING_BOOKING_STATUSES = ['CONFIRMED', 'ONGOING'];
@@ -322,6 +323,7 @@ const createProperty = async (req, res) => {
             minNights,
             maxNights,
             customFields,
+            locationId,
         } = req.body;
 
         // Removed captcha verification as route is protected by authentication
@@ -336,10 +338,10 @@ const createProperty = async (req, res) => {
             images = parsed ?? (Array.isArray(req.body.images) ? req.body.images : [req.body.images]);
         }
 
-        if (images.length === 0) {
+        if (images.length < 5) {
             return res.status(400).json({
                 success: false,
-                message: 'Upload at least one photo.',
+                message: 'Upload at least 5 photos.',
             });
         }
 
@@ -361,6 +363,44 @@ const createProperty = async (req, res) => {
             if (owner) ownerId = owner.id;
         }
 
+        // Resolve catalog Location (Admin Locations) — sync display strings from it
+        let resolvedLocationId = null;
+        let locationText = location;
+        let stateText = state;
+        let countryText = country;
+        let latText = latitude;
+        let lngText = longitude;
+        if (locationId != null && String(locationId).trim() !== '') {
+            const id = parseInt(String(locationId), 10);
+            if (!Number.isNaN(id)) {
+                const catalog = await prisma.location.findUnique({ where: { id } });
+                if (!catalog) {
+                    return res.status(400).json({
+                        success: false,
+                        message: 'Invalid location. Pick a destination from the list.',
+                    });
+                }
+                resolvedLocationId = catalog.id;
+                locationText = catalog.name;
+                if (catalog.lat != null) latText = String(catalog.lat);
+                if (catalog.lng != null) lngText = String(catalog.lng);
+                // If parent exists, use parent name as state when state not provided
+                if (!stateText && catalog.parentSlug) {
+                    const parent = await prisma.location.findUnique({
+                        where: { slug: catalog.parentSlug },
+                    });
+                    if (parent) stateText = parent.name;
+                }
+            }
+        }
+
+        if (!locationText || !String(locationText).trim()) {
+            return res.status(400).json({
+                success: false,
+                message: 'Location is required. Select a destination from the list.',
+            });
+        }
+
         const baseSlug = String(propertyName || 'rental')
             .toLowerCase()
             .replace(/[^a-z0-9\s-]/g, '')
@@ -374,11 +414,12 @@ const createProperty = async (req, res) => {
         const property = await prisma.property.create({
             data: {
                 propertyName,
-                location,
-                state,
-                country,
-                latitude,
-                longitude,
+                location: String(locationText).trim(),
+                state: stateText || null,
+                country: countryText || null,
+                latitude: latText || null,
+                longitude: lngText || null,
+                locationId: resolvedLocationId,
                 guests: parseInt(guests) || 0,
                 bedrooms: parseInt(bedrooms) || 0,
                 bathrooms: parseInt(bathrooms) || 0,
@@ -413,6 +454,7 @@ const createProperty = async (req, res) => {
                 owner: {
                     select: { id: true, email: true, firstName: true, lastName: true },
                 },
+                catalogLocation: true,
             },
         });
 
@@ -515,6 +557,7 @@ const getPropertyById = async (req, res) => {
                 owner: {
                     select: { id: true, email: true, firstName: true, lastName: true, phoneNumber: true },
                 },
+                catalogLocation: true,
             },
         });
 
@@ -709,6 +752,39 @@ const updateProperty = async (req, res) => {
             if (updateData[field] !== undefined) data[field] = updateData[field] ? new Date(updateData[field]) : null;
         });
 
+        // Bind to Admin Location catalog when locationId is sent
+        if (updateData.locationId !== undefined) {
+            const raw = updateData.locationId;
+            if (raw === null || raw === '' || raw === 'null') {
+                data.locationId = null;
+            } else {
+                const locId = parseInt(String(raw), 10);
+                if (Number.isNaN(locId)) {
+                    return res.status(400).json({
+                        success: false,
+                        message: 'Invalid locationId.',
+                    });
+                }
+                const catalog = await prisma.location.findUnique({ where: { id: locId } });
+                if (!catalog) {
+                    return res.status(400).json({
+                        success: false,
+                        message: 'Invalid location. Pick a destination from the list.',
+                    });
+                }
+                data.locationId = catalog.id;
+                data.location = catalog.name;
+                if (catalog.lat != null) data.latitude = String(catalog.lat);
+                if (catalog.lng != null) data.longitude = String(catalog.lng);
+                if (updateData.state === undefined && catalog.parentSlug) {
+                    const parent = await prisma.location.findUnique({
+                        where: { slug: catalog.parentSlug },
+                    });
+                    if (parent) data.state = parent.name;
+                }
+            }
+        }
+
         // Handle image updates
         let existingImages = [];
         if (updateData.images !== undefined) {
@@ -728,7 +804,14 @@ const updateProperty = async (req, res) => {
 
         // Combine them if any exist, otherwise omit the field
         if (existingImages.length > 0 || newImages.length > 0) {
-            data.images = stringifyJsonField([...existingImages, ...newImages]);
+            const combined = [...existingImages, ...newImages];
+            if (combined.length < 5) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Keep at least 5 photos.',
+                });
+            }
+            data.images = stringifyJsonField(combined);
         }
 
         const updated = await prisma.property.update({
@@ -738,6 +821,7 @@ const updateProperty = async (req, res) => {
                 owner: {
                     select: { id: true, email: true, firstName: true, lastName: true },
                 },
+                catalogLocation: true,
             },
         });
 
@@ -817,11 +901,22 @@ const getPropertiesByLocation = async (req, res) => {
 
         const where = { status: 'Active' };
         if (name) {
-            where.OR = [
-                { location: { contains: name } },
-                { propertyName: { contains: name } },
-                { state: { contains: name } },
-            ];
+            const catalog = await prisma.location.findFirst({
+                where: {
+                    isActive: true,
+                    name: { equals: String(name).trim(), mode: 'insensitive' },
+                },
+            });
+            if (catalog) {
+                const locFilter = propertyWhereForCatalogLocation(catalog, { activeOnly: false });
+                if (locFilter?.OR) where.OR = locFilter.OR;
+            } else {
+                where.OR = [
+                    { location: { contains: name } },
+                    { propertyName: { contains: name } },
+                    { state: { contains: name } },
+                ];
+            }
         }
         if (guests) {
             where.guests = { gte: parseInt(guests) || 1 };

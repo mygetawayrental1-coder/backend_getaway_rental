@@ -78,6 +78,23 @@ function buildLocationFilter(term) {
     };
 }
 
+/**
+ * Prefer FK binding; keep string contains so existing listings / URLs still work.
+ * `loc` = Location row { id, name }
+ */
+function propertyWhereForCatalogLocation(loc, { activeOnly = true } = {}) {
+    if (!loc?.id) return null;
+    const name = String(loc.name || '').trim();
+    const or = [{ locationId: loc.id }];
+    if (name) {
+        or.push({ location: { contains: name, mode: 'insensitive' } });
+        or.push({ state: { contains: name, mode: 'insensitive' } });
+    }
+    const where = { OR: or };
+    if (activeOnly) where.status = 'Active';
+    return where;
+}
+
 // Pagination helper
 const getPagination = (page = 1, limit = 10) => {
     let parsedPage = 1;
@@ -121,6 +138,7 @@ module.exports = {
     formatPropertiesResponse,
     calculateNights,
     buildLocationFilter,
+    propertyWhereForCatalogLocation,
     getPagination,
     formatPaginatedResponse,
 };

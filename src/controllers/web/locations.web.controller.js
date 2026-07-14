@@ -2,6 +2,7 @@ const prisma = require('../../config/database');
 const {
     formatPropertiesResponse,
     getPagination,
+    propertyWhereForCatalogLocation,
 } = require('../../utils/helpers');
 
 function buildOrder(sort) {
@@ -20,15 +21,9 @@ function buildOrder(sort) {
     }
 }
 
-function propertyLocationWhere(locationName) {
-    const term = String(locationName).trim();
-    return {
-        status: 'Active',
-        OR: [
-            { location: { contains: term, mode: 'insensitive' } },
-            { state: { contains: term, mode: 'insensitive' } },
-        ],
-    };
+/** Count / list where: FK first, string fallback so old listings still count. */
+function propertyLocationWhere(loc) {
+    return propertyWhereForCatalogLocation(loc, { activeOnly: true });
 }
 
 exports.listLocations = async (req, res) => {
@@ -41,7 +36,7 @@ exports.listLocations = async (req, res) => {
         const withCounts = await Promise.all(
             locations.map(async (loc) => {
                 const rentalCount = await prisma.property.count({
-                    where: propertyLocationWhere(loc.name),
+                    where: propertyLocationWhere(loc),
                 });
                 return { ...loc, rentalCount };
             }),
@@ -67,7 +62,7 @@ exports.getBySlug = async (req, res) => {
         }
 
         const rentalCount = await prisma.property.count({
-            where: propertyLocationWhere(location.name),
+            where: propertyLocationWhere(location),
         });
 
         res.json({ success: true, location: { ...location, rentalCount } });
@@ -92,7 +87,7 @@ exports.getLocationProperties = async (req, res) => {
         }
 
         const pagination = getPagination(page, limit);
-        const where = propertyLocationWhere(location.name);
+        const where = propertyLocationWhere(location);
         const orderBy = buildOrder(sort);
 
         const [rows, total] = await Promise.all([
@@ -114,6 +109,7 @@ exports.getLocationProperties = async (req, res) => {
                             createdAt: true,
                         },
                     },
+                    catalogLocation: true,
                 },
             }),
             prisma.property.count({ where }),
@@ -148,7 +144,7 @@ exports.listAllAdmin = async (req, res) => {
         const withCounts = await Promise.all(
             locations.map(async (loc) => {
                 const rentalCount = await prisma.property.count({
-                    where: propertyLocationWhere(loc.name),
+                    where: propertyLocationWhere(loc),
                 });
                 return { ...loc, rentalCount };
             }),
@@ -199,7 +195,8 @@ exports.createLocation = async (req, res) => {
 exports.updateLocation = async (req, res) => {
     try {
         const { slug } = req.params;
-        const body = req.body || {};
+        const { name, newSlug, parentSlug, image, description, lat, lng, sortOrder, isActive } =
+            req.body;
 
         const existing = await prisma.location.findUnique({ where: { slug } });
         if (!existing) {
@@ -207,21 +204,17 @@ exports.updateLocation = async (req, res) => {
         }
 
         const data = {};
-        if (body.name !== undefined) data.name = String(body.name).trim();
-        if (body.parentSlug !== undefined) {
-            data.parentSlug = body.parentSlug ? String(body.parentSlug).trim() : null;
+        if (name !== undefined) data.name = String(name).trim();
+        if (newSlug !== undefined) data.slug = String(newSlug).trim().toLowerCase();
+        if (parentSlug !== undefined) data.parentSlug = parentSlug ? String(parentSlug).trim() : null;
+        if (image !== undefined) data.image = String(image).trim();
+        if (description !== undefined) {
+            data.description = description ? String(description).trim() : null;
         }
-        if (body.image !== undefined) data.image = String(body.image).trim();
-        if (body.description !== undefined) {
-            data.description = body.description ? String(body.description).trim() : null;
-        }
-        if (body.lat !== undefined) data.lat = body.lat != null ? parseFloat(body.lat) : null;
-        if (body.lng !== undefined) data.lng = body.lng != null ? parseFloat(body.lng) : null;
-        if (body.sortOrder !== undefined) data.sortOrder = parseInt(body.sortOrder, 10) || 0;
-        if (body.isActive !== undefined) data.isActive = Boolean(body.isActive);
-        if (body.newSlug !== undefined && body.newSlug !== slug) {
-            data.slug = String(body.newSlug).trim().toLowerCase();
-        }
+        if (lat !== undefined) data.lat = lat != null && lat !== '' ? parseFloat(lat) : null;
+        if (lng !== undefined) data.lng = lng != null && lng !== '' ? parseFloat(lng) : null;
+        if (sortOrder !== undefined) data.sortOrder = parseInt(sortOrder, 10) || 0;
+        if (isActive !== undefined) data.isActive = Boolean(isActive);
 
         const location = await prisma.location.update({
             where: { slug },
