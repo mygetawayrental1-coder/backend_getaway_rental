@@ -2,6 +2,7 @@ const { Prisma } = require('@prisma/client');
 const prisma = require('../config/database');
 const { stringifyJsonField, parseJsonField, getPagination, formatPaginatedResponse } = require('../utils/helpers');
 const { validateCouponForPlan, applyCoupon } = require('./coupon.controller');
+const { reconcileUserRole } = require('../services/subscriptionAccess.service');
 
 // Get all subscription plans
 const getAllPlans = async (req, res) => {
@@ -391,6 +392,14 @@ const adminAssignSubscription = async (req, res) => {
             include: { plan: true }
         });
 
+        const user = await prisma.user.findUnique({ where: { id: userId } });
+        if (user && user.role !== 'ADMIN' && user.role !== 'OWNER') {
+            await prisma.user.update({
+                where: { id: userId },
+                data: { role: 'OWNER' },
+            });
+        }
+
         res.json({
             success: true,
             message: 'Subscription assigned successfully.',
@@ -428,6 +437,13 @@ const cancelSubscription = async (req, res) => {
             where: { id: subscription.id },
             data: { status: 'CANCELLED' },
         });
+
+        // Demote to USER immediately when no active plan remains.
+        try {
+            await reconcileUserRole(userId);
+        } catch (reconcileErr) {
+            console.warn('[subscriptions] role reconcile after cancel failed:', reconcileErr.message);
+        }
 
         res.json({
             success: true,

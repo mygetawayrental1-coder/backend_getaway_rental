@@ -21,7 +21,20 @@ const authenticate = async (req, res, next) => {
         }
 
         const token = authHeader.split(' ')[1];
-        const user = await getUserFromBearerToken(token);
+        let user;
+        try {
+            user = await getUserFromBearerToken(token);
+        } catch (err) {
+            if (err?.code === 'ACCOUNT_SUSPENDED') {
+                return res.status(403).json({
+                    success: false,
+                    code: 'ACCOUNT_SUSPENDED',
+                    message:
+                        'Your account has been suspended. Please contact support to restore access.',
+                });
+            }
+            throw err;
+        }
 
         if (!user) {
             return res.status(401).json({
@@ -51,8 +64,13 @@ const optionalAuth = async (req, res, next) => {
         }
 
         const token = authHeader.split(' ')[1];
-        const user = await getUserFromBearerTokenOptional(token);
-        if (user) attachUser(req, user);
+        try {
+            const user = await getUserFromBearerTokenOptional(token);
+            if (user) attachUser(req, user);
+        } catch (err) {
+            // Suspended users stay unauthenticated for optional routes.
+            if (err?.code !== 'ACCOUNT_SUSPENDED') throw err;
+        }
 
         next();
     } catch (error) {

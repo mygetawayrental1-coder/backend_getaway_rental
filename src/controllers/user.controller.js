@@ -1,12 +1,20 @@
 const bcrypt = require('bcryptjs');
 const prisma = require('../config/database');
 const { getPagination, formatPaginatedResponse } = require('../utils/helpers');
+const { reconcileAllNonAdminRoles } = require('../services/subscriptionAccess.service');
 
 // Get all users (Admin only)
 const getAllUsers = async (req, res) => {
     try {
         const { page, limit, role, search } = req.query;
         const pagination = getPagination(page, limit);
+
+        // Keep RBAC labels accurate: no plan → USER, active plan → OWNER.
+        try {
+            await reconcileAllNonAdminRoles();
+        } catch (reconcileErr) {
+            console.warn('[users] role reconcile failed:', reconcileErr.message);
+        }
 
         const where = {};
         if (role) where.role = role;
@@ -231,12 +239,24 @@ const deleteUser = async (req, res) => {
 // Get all owners
 const getAllOwners = async (req, res) => {
     try {
-        const { page, limit, search } = req.query;
+        const { page, limit, search, subscribed } = req.query;
         const pagination = getPagination(page, limit);
+        const now = new Date();
+        const subscribedOnly = subscribed === 'true' || subscribed === '1';
 
-        const where = { role: { not: 'ADMIN' } };
+        // Owners list = OWNER role (active plan). Use subscribed=true for plan filter too.
+        const where = { role: 'OWNER' };
+        if (subscribedOnly) {
+            where.subscriptions = {
+                some: {
+                    status: 'ACTIVE',
+                    endDate: { gt: now },
+                },
+            };
+        }
         if (search) {
             where.AND = [
+                ...(where.AND || []),
                 {
                     OR: [
                         { email: { contains: search, mode: 'insensitive' } },
@@ -270,7 +290,7 @@ const getAllOwners = async (req, res) => {
                     subscriptions: {
                         where: {
                             status: 'ACTIVE',
-                            endDate: { gt: new Date() },
+                            endDate: { gt: now },
                         },
                         take: 1,
                         orderBy: { endDate: 'desc' },
@@ -288,7 +308,7 @@ const getAllOwners = async (req, res) => {
             const { subscriptions, ...rest } = o;
             return {
                 ...rest,
-                role: rest.role === 'END_USER' ? 'OWNER' : rest.role,
+                role: rest.role,
                 subscription: activeSub
                     ? {
                           planName: activeSub.plan.name,
@@ -319,7 +339,10 @@ const getOwnerById = async (req, res) => {
         const { id } = req.params;
 
         const owner = await prisma.user.findFirst({
-            where: { id, role: 'OWNER' },
+            where: {
+                id,
+                role: { in: ['OWNER', 'END_USER'] },
+            },
             select: {
                 id: true,
                 email: true,
@@ -329,6 +352,8 @@ const getOwnerById = async (req, res) => {
                 phoneNumber: true,
                 address: true,
                 profilePic: true,
+                role: true,
+                isActive: true,
                 createdAt: true,
                 ownedProperties: {
                     orderBy: { createdAt: 'desc' },
@@ -348,6 +373,24 @@ const getOwnerById = async (req, res) => {
                         },
                     },
                 },
+                subscriptions: {
+                    where: {
+                        status: { in: ['ACTIVE', 'Active'] },
+                        endDate: { gt: new Date() },
+                    },
+                    take: 1,
+                    orderBy: { endDate: 'desc' },
+                    include: {
+                        plan: {
+                            select: {
+                                id: true,
+                                name: true,
+                                maxProperties: true,
+                                duration: true,
+                            },
+                        },
+                    },
+                },
                 _count: {
                     select: { ownedProperties: true },
                 },
@@ -361,6 +404,9 @@ const getOwnerById = async (req, res) => {
             });
         }
 
+        const activeSub = owner.subscriptions?.[0] || null;
+        const { subscriptions, ownedProperties, ...rest } = owner;
+
         const bookingRevenueAgg = await prisma.booking.aggregate({
             where: {
                 status: 'CONFIRMED',
@@ -372,7 +418,26 @@ const getOwnerById = async (req, res) => {
         res.json({
             success: true,
             data: {
-                ...owner,
+                ...rest,
+                role: rest.role,
+                fullName: [rest.firstName, rest.lastName].filter(Boolean).join(' ').trim() || rest.email,
+                phone: rest.phoneNumber
+                    ? `${rest.countryCode ? `${rest.countryCode} ` : ''}${rest.phoneNumber}`.trim()
+                    : null,
+                properties: ownedProperties,
+                propertyCount: ownedProperties.length,
+                ownedProperties,
+                subscription: activeSub
+                    ? {
+                          id: activeSub.id,
+                          status: activeSub.status,
+                          startDate: activeSub.startDate,
+                          endDate: activeSub.endDate,
+                          planName: activeSub.plan?.name || null,
+                          maxProperties: activeSub.plan?.maxProperties ?? null,
+                          duration: activeSub.plan?.duration || null,
+                      }
+                    : null,
                 bookingRevenue: bookingRevenueAgg._sum.totalAmount || 0,
             },
         });

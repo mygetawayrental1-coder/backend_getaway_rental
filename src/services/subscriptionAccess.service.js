@@ -85,9 +85,79 @@ async function getSubscriptionSummary(userId) {
     };
 }
 
+/**
+ * OWNER = has an active paid/admin plan.
+ * Fresh signups and users without a plan stay END_USER (shown as USER in admin).
+ * Never changes ADMIN.
+ */
+async function reconcileUserRole(userId) {
+    if (!userId) return null;
+
+    const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { id: true, role: true },
+    });
+    if (!user || user.role === 'ADMIN') return user;
+
+    const subscription = await getActiveSubscription(userId);
+
+    if (subscription && user.role !== 'OWNER') {
+        return prisma.user.update({
+            where: { id: userId },
+            data: { role: 'OWNER' },
+            select: { id: true, role: true },
+        });
+    }
+
+    if (!subscription && user.role === 'OWNER') {
+        return prisma.user.update({
+            where: { id: userId },
+            data: { role: 'END_USER' },
+            select: { id: true, role: true },
+        });
+    }
+
+    return user;
+}
+
+/** Bulk sync roles for admin lists (no-plan → USER, active plan → OWNER). */
+async function reconcileAllNonAdminRoles() {
+    const now = new Date();
+
+    await prisma.user.updateMany({
+        where: {
+            role: 'OWNER',
+            NOT: {
+                subscriptions: {
+                    some: {
+                        status: 'ACTIVE',
+                        endDate: { gt: now },
+                    },
+                },
+            },
+        },
+        data: { role: 'END_USER' },
+    });
+
+    await prisma.user.updateMany({
+        where: {
+            role: 'END_USER',
+            subscriptions: {
+                some: {
+                    status: 'ACTIVE',
+                    endDate: { gt: now },
+                },
+            },
+        },
+        data: { role: 'OWNER' },
+    });
+}
+
 module.exports = {
     getActiveSubscription,
     countOwnerProperties,
     assertCanCreateListing,
     getSubscriptionSummary,
+    reconcileUserRole,
+    reconcileAllNonAdminRoles,
 };

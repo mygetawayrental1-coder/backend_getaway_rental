@@ -1,4 +1,5 @@
 const prisma = require('../config/database');
+const { reconcileAllNonAdminRoles } = require('../services/subscriptionAccess.service');
 
 const BOOKING_STATUSES = ['PENDING', 'CONFIRMED', 'ONGOING', 'COMPLETED', 'CANCELLED'];
 
@@ -36,19 +37,40 @@ async function countBookingsByStatus(where) {
 }
 
 async function getAdminStats() {
+    // Keep role counts aligned with product rules: no plan → USER, active plan → OWNER.
+    try {
+        await reconcileAllNonAdminRoles();
+    } catch (err) {
+        console.warn('[dashboard] role reconcile failed:', err.message);
+    }
+
     const now = new Date();
     const monthStart = startOfMonth(now);
     const monthEnd = startOfNextMonth(now);
 
     const batch1 = await Promise.all([
-        prisma.user.count(),
+        prisma.user.count({ where: { role: { not: 'ADMIN' } } }),
         prisma.user.count({ where: { role: 'OWNER' } }),
         prisma.user.count({ where: { role: 'END_USER' } }),
-        prisma.user.count({ where: { createdAt: { gte: monthStart, lt: monthEnd } } }),
+        prisma.user.count({ where: { role: 'ADMIN' } }),
+        prisma.user.count({
+            where: {
+                role: { not: 'ADMIN' },
+                createdAt: { gte: monthStart, lt: monthEnd },
+            },
+        }),
         prisma.property.count(),
         prisma.property.count({ where: { status: 'Active' } }),
     ]);
-    const [totalUsers, totalOwners, totalEndUsers, newThisMonth, totalProperties, activeProperties] = batch1;
+    const [
+        totalNonAdminUsers,
+        totalOwners,
+        totalEndUsers,
+        totalAdmins,
+        newThisMonth,
+        totalProperties,
+        activeProperties,
+    ] = batch1;
 
     const batch2 = await Promise.all([
         prisma.property.count({ where: { status: 'Inactive' } }),
@@ -72,8 +94,12 @@ async function getAdminStats() {
 
     const batch4 = await Promise.all([
         prisma.subscriptionPlan.count(),
-        prisma.userSubscription.count({ where: { status: 'ACTIVE' } }),
-        prisma.userSubscription.count({ where: { status: 'ACTIVE', endDate: { gte: monthStart, lt: monthEnd } } }),
+        prisma.userSubscription.count({
+            where: { status: 'ACTIVE', endDate: { gt: now } },
+        }),
+        prisma.userSubscription.count({
+            where: { status: 'ACTIVE', endDate: { gte: monthStart, lt: monthEnd } },
+        }),
         prisma.payout.count({ where: { status: 'PENDING' } }),
         prisma.payout.count({ where: { status: 'PROCESSING' } }),
         prisma.payout.aggregate({ where: { status: 'PAID' }, _sum: { amount: true } }),
@@ -84,15 +110,38 @@ async function getAdminStats() {
         prisma.supportTicket.count({ where: { status: 'OPEN' } }),
         prisma.supportTicket.count({ where: { status: 'IN_PROGRESS' } }),
         prisma.ownerRequest.count({ where: { status: 'PENDING' } }),
+        prisma.webContactMessage.count(),
+        prisma.webContactMessage.count({ where: { isRead: false } }),
+        prisma.userSubscription.groupBy({
+            by: ['userId'],
+            where: {
+                status: 'ACTIVE',
+                endDate: { gt: now },
+            },
+        }),
     ]);
-    const [openTickets, inProgressTickets, pendingOwnerRequests] = batch5;
+    const [
+        openTickets,
+        inProgressTickets,
+        pendingOwnerRequests,
+        totalContactMessages,
+        unreadContactMessages,
+        subscribedOwnerGroups,
+    ] = batch5;
 
     return {
         users: {
-            total: totalUsers,
+            // Non-admin accounts only for marketplace totals.
+            total: totalNonAdminUsers,
+            // OWNER = active plan (purchased or admin-assigned).
             owners: totalOwners,
+            // END_USER = signed up, no plan (shown as USER in RBAC).
             endUsers: totalEndUsers,
+            users: totalEndUsers,
+            admins: totalAdmins,
             newThisMonth,
+            // Same as owners after role reconcile.
+            subscribedOwners: subscribedOwnerGroups.length,
         },
         properties: {
             total: totalProperties,
@@ -125,6 +174,7 @@ async function getAdminStats() {
             plansCount,
             activeSubscriptions,
             expiringThisMonth,
+            subscribedOwners: subscribedOwnerGroups.length,
         },
         payouts: {
             pending: pendingPayouts,
@@ -134,9 +184,14 @@ async function getAdminStats() {
         support: {
             open: openTickets,
             inProgress: inProgressTickets,
+            active: openTickets + inProgressTickets,
         },
         ownerRequests: {
             pending: pendingOwnerRequests,
+        },
+        contacts: {
+            total: totalContactMessages,
+            unread: unreadContactMessages,
         },
     };
 }
@@ -271,8 +326,10 @@ const getStats = async (req, res) => {
 
         if (role === 'ADMIN') {
             data = await getAdminStats();
-        } else {
+        } else if (role === 'OWNER') {
             data = await getOwnerStats(userId);
+        } else {
+            data = await getEndUserStats(req.user);
         }
 
         res.json({ success: true, data });

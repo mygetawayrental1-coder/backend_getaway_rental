@@ -12,6 +12,15 @@ const {
     NOTIFICATION_TYPES,
 } = require('../services/notification.service');
 
+const BLOCKING_BOOKING_STATUSES = ['CONFIRMED', 'ONGOING'];
+const PENDING_REQUEST_STATUSES = ['NEW', 'VIEWED', 'CONTACTED'];
+
+function startOfDay(value) {
+    const d = new Date(value);
+    d.setHours(0, 0, 0, 0);
+    return d;
+}
+
 function emailPayload(request, property) {
     return {
         propertyName: property.propertyName,
@@ -26,6 +35,84 @@ function emailPayload(request, property) {
             ? `${property.owner.countryCode || ''} ${property.owner.phoneNumber}`.trim()
             : null,
     };
+}
+
+/**
+ * Returns conflicting bookings / accepted requests / owner-blocked nights
+ * for the same property and overlapping stay.
+ */
+async function findStayConflicts(propertyId, checkin, checkout, { excludeRequestId } = {}) {
+    if (!checkin || !checkout) {
+        return { bookings: [], acceptedRequests: [], ownerBlocked: false };
+    }
+
+    const checkinDate = startOfDay(checkin);
+    const checkoutDate = startOfDay(checkout);
+
+    const [bookings, acceptedRequests, ownerBlock] = await Promise.all([
+        prisma.booking.findMany({
+            where: {
+                propertyId,
+                status: { in: BLOCKING_BOOKING_STATUSES },
+                checkin: { lt: checkoutDate },
+                checkout: { gt: checkinDate },
+            },
+            select: {
+                id: true,
+                bookingId: true,
+                checkin: true,
+                checkout: true,
+                guestName: true,
+                status: true,
+            },
+        }),
+        prisma.guestRequest.findMany({
+            where: {
+                propertyId,
+                status: 'ACCEPTED',
+                ...(excludeRequestId ? { id: { not: excludeRequestId } } : {}),
+                AND: [
+                    { checkin: { not: null } },
+                    { checkout: { not: null } },
+                    { checkin: { lt: checkoutDate } },
+                    { checkout: { gt: checkinDate } },
+                ],
+            },
+            select: {
+                id: true,
+                fullName: true,
+                checkin: true,
+                checkout: true,
+            },
+        }),
+        prisma.propertyAvailability.findFirst({
+            where: {
+                propertyId,
+                isAvailable: false,
+                date: { gte: checkinDate, lt: checkoutDate },
+            },
+            select: { id: true, date: true },
+        }),
+    ]);
+
+    return {
+        bookings,
+        acceptedRequests,
+        ownerBlocked: Boolean(ownerBlock),
+    };
+}
+
+function conflictMessage(conflicts) {
+    if (conflicts.ownerBlocked) {
+        return 'These dates include nights you blocked on the availability calendar.';
+    }
+    if (conflicts.bookings.length > 0) {
+        return 'These dates overlap an existing confirmed booking. Only one stay can occupy the same nights.';
+    }
+    if (conflicts.acceptedRequests.length > 0) {
+        return 'These dates overlap another accepted rent request. Decline the other request or choose different dates.';
+    }
+    return 'These dates are not available.';
 }
 
 // Create guest request (PUBLIC - no auth required)
@@ -65,6 +152,22 @@ const createGuestRequest = async (req, res) => {
                 success: false,
                 message: 'Property not found.',
             });
+        }
+
+        if (checkin && checkout) {
+            const conflicts = await findStayConflicts(property.id, checkin, checkout);
+            if (
+                conflicts.ownerBlocked ||
+                conflicts.bookings.length > 0 ||
+                conflicts.acceptedRequests.length > 0
+            ) {
+                return res.status(409).json({
+                    success: false,
+                    message:
+                        'Those dates are already booked or blocked. Please choose different check-in / check-out dates.',
+                    conflicts,
+                });
+            }
         }
 
         const guestRequest = await prisma.guestRequest.create({
@@ -300,6 +403,36 @@ const updateGuestRequestStatus = async (req, res) => {
         }
 
         const previousStatus = request.status;
+
+        // Prevent double-booking: cannot accept overlapping stays.
+        if (status === 'ACCEPTED' && previousStatus !== 'ACCEPTED') {
+            if (!request.checkin || !request.checkout) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'This request has no stay dates, so it cannot be accepted as a booking.',
+                });
+            }
+
+            const conflicts = await findStayConflicts(
+                request.propertyId,
+                request.checkin,
+                request.checkout,
+                { excludeRequestId: request.id },
+            );
+
+            if (
+                conflicts.ownerBlocked ||
+                conflicts.bookings.length > 0 ||
+                conflicts.acceptedRequests.length > 0
+            ) {
+                return res.status(409).json({
+                    success: false,
+                    message: conflictMessage(conflicts),
+                    conflicts,
+                });
+            }
+        }
+
         const updated = await prisma.guestRequest.update({
             where: { id },
             data: { status },
@@ -317,31 +450,101 @@ const updateGuestRequestStatus = async (req, res) => {
         };
 
         if (status === 'ACCEPTED' && previousStatus !== 'ACCEPTED') {
-            // Automatically create a CONFIRMED booking to block the calendar dates
-            if (request.checkin && request.checkout) {
-                try {
-                    const checkin = new Date(request.checkin);
-                    const checkout = new Date(request.checkout);
-                    const nights = Math.max(1, Math.ceil((checkout - checkin) / (1000 * 60 * 60 * 24)));
-                    const nightlyRate = request.property.nightlyRate || 0;
+            const checkin = startOfDay(request.checkin);
+            const checkout = startOfDay(request.checkout);
+            const nights = Math.max(
+                1,
+                Math.ceil((checkout - checkin) / (1000 * 60 * 60 * 24)),
+            );
+            const nightlyRate = request.property.nightlyRate || 0;
 
-                    await prisma.booking.create({
-                        data: {
-                            propertyId: request.propertyId,
-                            guestName: request.fullName,
-                            guestEmail: request.email,
-                            guestPhone: request.phone,
-                            checkin,
-                            checkout,
-                            guests: request.guests,
-                            nights,
-                            nightlyRate,
-                            totalAmount: nights * nightlyRate,
-                            status: 'CONFIRMED',
-                        },
+            try {
+                // Re-check inside create path so two accepts can't race.
+                const raceConflicts = await findStayConflicts(
+                    request.propertyId,
+                    checkin,
+                    checkout,
+                    { excludeRequestId: request.id },
+                );
+                if (
+                    raceConflicts.ownerBlocked ||
+                    raceConflicts.bookings.length > 0 ||
+                    raceConflicts.acceptedRequests.length > 0
+                ) {
+                    await prisma.guestRequest.update({
+                        where: { id },
+                        data: { status: previousStatus },
                     });
-                } catch (bookingErr) {
-                    console.error('Failed to create booking from guest request:', bookingErr.message);
+                    return res.status(409).json({
+                        success: false,
+                        message: conflictMessage(raceConflicts),
+                        conflicts: raceConflicts,
+                    });
+                }
+
+                await prisma.booking.create({
+                    data: {
+                        propertyId: request.propertyId,
+                        guestName: request.fullName,
+                        guestEmail: request.email,
+                        guestPhone: request.phone,
+                        checkin,
+                        checkout,
+                        guests: request.guests,
+                        nights,
+                        nightlyRate,
+                        totalAmount: nights * nightlyRate,
+                        status: 'CONFIRMED',
+                    },
+                });
+            } catch (bookingErr) {
+                console.error('Failed to create booking from guest request:', bookingErr.message);
+                await prisma.guestRequest.update({
+                    where: { id },
+                    data: { status: previousStatus },
+                });
+                return res.status(500).json({
+                    success: false,
+                    message: 'Could not block these dates as a booking. Request was not accepted.',
+                });
+            }
+
+            // Auto-decline other pending requests that overlap these nights.
+            const overlappingPending = await prisma.guestRequest.findMany({
+                where: {
+                    propertyId: request.propertyId,
+                    id: { not: request.id },
+                    status: { in: PENDING_REQUEST_STATUSES },
+                    AND: [
+                        { checkin: { not: null } },
+                        { checkout: { not: null } },
+                        { checkin: { lt: checkout } },
+                        { checkout: { gt: checkin } },
+                    ],
+                },
+            });
+
+            if (overlappingPending.length > 0) {
+                await prisma.guestRequest.updateMany({
+                    where: { id: { in: overlappingPending.map((r) => r.id) } },
+                    data: { status: 'REJECTED' },
+                });
+
+                for (const pending of overlappingPending) {
+                    try {
+                        await sendGuestRequestRejectedToGuest(pending.email, {
+                            propertyName: request.property.propertyName,
+                            fullName: pending.fullName,
+                            email: pending.email,
+                            phone: pending.phone,
+                            checkin: pending.checkin,
+                            checkout: pending.checkout,
+                            guests: pending.guests,
+                            message: pending.message,
+                        });
+                    } catch (emailError) {
+                        console.error('Auto-reject email failed:', emailError.message);
+                    }
                 }
             }
 
@@ -366,7 +569,10 @@ const updateGuestRequestStatus = async (req, res) => {
 
         res.json({
             success: true,
-            message: 'Status updated successfully.',
+            message:
+                status === 'ACCEPTED'
+                    ? 'Request accepted. Overlapping pending requests were declined automatically.'
+                    : 'Status updated successfully.',
             data: updated,
         });
     } catch (error) {

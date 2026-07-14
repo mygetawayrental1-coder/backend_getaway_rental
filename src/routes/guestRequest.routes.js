@@ -7,7 +7,7 @@ const { requireRole, ROLES } = require('../middleware/roles');
 // PUBLIC route - guests can submit requests without auth
 router.post('/', guestRequestController.createGuestRequest);
 
-// OWNER-only — guest booking requests belong to the property owner, not the admin.
+// OWNER-only — guest booking requests for property hosts with a plan.
 router.get('/my', authenticate, requireRole(ROLES.OWNER), guestRequestController.getOwnerGuestRequests);
 router.get('/:id', authenticate, requireRole(ROLES.OWNER), guestRequestController.getGuestRequestById);
 router.patch('/:id/status', authenticate, requireRole(ROLES.OWNER), guestRequestController.updateGuestRequestStatus);

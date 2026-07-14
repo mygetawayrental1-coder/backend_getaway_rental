@@ -1,6 +1,7 @@
 const prisma = require('../config/database');
 const { createClerkClient, verifyToken: verifyClerkJwt } = require('@clerk/backend');
 const { syncUser } = require('../controllers/auth.controller');
+const { reconcileUserRole } = require('./subscriptionAccess.service');
 
 /** Map Clerk Backend API user → webhook-style payload for syncUser. */
 function clerkApiUserToSyncPayload(user) {
@@ -85,19 +86,29 @@ async function getUserFromBearerToken(token) {
         }
 
         if (user && user.isActive === false) {
-            return null;
+            const err = new Error('ACCOUNT_SUSPENDED');
+            err.code = 'ACCOUNT_SUSPENDED';
+            err.user = user;
+            throw err;
         }
 
-        // Legacy END_USER accounts are property owners — normalize role in API + DB.
-        if (user && user.role === 'END_USER') {
-            prisma.user
-                .update({ where: { id: user.id }, data: { role: 'OWNER' } })
-                .catch((err) => console.warn('[auth] END_USER→OWNER upgrade failed:', err.message));
-            return { ...user, role: 'OWNER' };
+        // OWNER only while an active plan exists; otherwise stay USER (END_USER).
+        if (user && user.role !== 'ADMIN') {
+            try {
+                const reconciled = await reconcileUserRole(user.id);
+                if (reconciled?.role) {
+                    user = { ...user, role: reconciled.role };
+                }
+            } catch (reconcileErr) {
+                console.warn('[auth] role reconcile failed:', reconcileErr.message);
+            }
         }
 
         return user;
     } catch (error) {
+        if (error?.code === 'ACCOUNT_SUSPENDED') {
+            throw error;
+        }
         console.error('[auth] Token verification failed:', error.message);
         return null;
     }

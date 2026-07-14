@@ -28,38 +28,32 @@ const syncUser = async (clerkData) => {
         firstName: clerkData.first_name || '',
         lastName: clerkData.last_name || '',
         profilePic: clerkData.image_url || null,
-        isActive: true,
     };
 
     const byClerk = await prisma.user.findUnique({ where: { clerkId } });
     if (byClerk) {
-        const rolePatch =
-            byClerk.role === 'END_USER' || byClerk.role === 'OWNER'
-                ? { role: 'OWNER' }
-                : {};
+        // Do not reset isActive or force OWNER — role comes from plan / admin RBAC.
         return prisma.user.update({
             where: { clerkId },
-            data: { ...profile, ...rolePatch },
+            data: profile,
         });
     }
 
     const byEmail = await prisma.user.findUnique({ where: { email } });
     if (byEmail) {
-        const rolePatch =
-            byEmail.role === 'END_USER' || byEmail.role === 'OWNER'
-                ? { role: 'OWNER' }
-                : {};
         return prisma.user.update({
             where: { email },
-            data: { ...profile, clerkId, ...rolePatch },
+            data: { ...profile, clerkId },
         });
     }
 
+    // Fresh signups start as USER until they buy a plan (then promoted to OWNER).
     return prisma.user.create({
         data: {
             clerkId,
             ...profile,
-            role: 'OWNER',
+            isActive: true,
+            role: 'END_USER',
         },
     });
 };
@@ -128,7 +122,7 @@ const getMe = async (req, res) => {
             success: true,
             data: {
                 ...user,
-                role: user.role === 'END_USER' ? 'OWNER' : user.role,
+                role: user.role,
                 ...subscription,
             },
         });

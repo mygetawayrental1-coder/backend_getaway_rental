@@ -489,7 +489,29 @@ exports.getPropertyBookings = async (req, res) => {
             orderBy: { checkin: 'asc' },
         });
 
-        res.json({ success: true, bookings });
+        const acceptedRequests = await prisma.guestRequest.findMany({
+            where: {
+                propertyId: property.id,
+                status: 'ACCEPTED',
+                checkin: { not: null },
+                checkout: { not: null },
+            },
+            select: {
+                checkin: true,
+                checkout: true,
+            },
+        });
+
+        res.json({
+            success: true,
+            bookings: [
+                ...bookings,
+                ...acceptedRequests.map((r) => ({
+                    checkin: r.checkin,
+                    checkout: r.checkout,
+                })),
+            ],
+        });
     } catch (error) {
         console.error('[web/properties] bookings', error);
         res.status(500).json({ success: false, message: 'Failed to fetch bookings.' });

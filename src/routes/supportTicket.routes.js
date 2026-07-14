@@ -4,6 +4,7 @@ const supportTicketController = require('../controllers/supportTicket.controller
 const { authenticate } = require('../middleware/auth');
 const { requireRole, requireAdmin, ROLES } = require('../middleware/roles');
 
+// Any authenticated user (guest support allowed)
 router.post(
     '/tickets',
     authenticate,
@@ -24,6 +25,18 @@ router.patch(
     authenticate,
     requireAdmin,
     supportTicketController.updateTicketStatus,
+);
+router.patch(
+    '/tickets/:id',
+    authenticate,
+    requireAdmin,
+    supportTicketController.updateTicket,
+);
+router.delete(
+    '/tickets/:id',
+    authenticate,
+    requireAdmin,
+    supportTicketController.deleteTicket,
 );
 
 module.exports = router;

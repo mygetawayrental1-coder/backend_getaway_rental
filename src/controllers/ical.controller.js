@@ -1,6 +1,7 @@
 const icalService = require('../services/ical.service');
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
+const { ROLES } = require('../middleware/roles');
 
 exports.importIcs = async (req, res) => {
     try {
@@ -17,6 +18,13 @@ exports.importIcs = async (req, res) => {
         const property = await prisma.property.findUnique({ where: { id: propertyId } });
         if (!property) {
             return res.status(404).json({ success: false, message: 'Property not found.' });
+        }
+
+        if (req.user.role !== ROLES.ADMIN && property.ownerId !== req.user.id) {
+            return res.status(403).json({
+                success: false,
+                message: 'Access denied. You can only import calendars for your own properties.',
+            });
         }
 
         const importedCount = await icalService.importFromUrl(propertyId, source, sourceUrl);

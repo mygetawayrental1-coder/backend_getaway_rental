@@ -82,7 +82,7 @@ exports.createPost = async (req, res) => {
         if (!title?.trim() || !excerpt?.trim() || !content?.trim() || !category?.trim() || !thumbnailUrl?.trim()) {
             return res.status(400).json({
                 success: false,
-                message: 'Title, excerpt, content, category, and thumbnail URL are required.',
+                message: 'Title, short summary, article, category, and cover photo are required.',
             });
         }
 
@@ -131,6 +131,22 @@ exports.listAllAdmin = async (req, res) => {
     } catch (error) {
         console.error('[web/blog] admin list', error);
         res.status(500).json({ success: false, message: 'Failed to fetch blog posts.' });
+    }
+};
+
+exports.getByIdAdmin = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const post = await prisma.blogPost.findUnique({ where: { id } });
+
+        if (!post) {
+            return res.status(404).json({ success: false, message: 'Post not found.' });
+        }
+
+        res.json({ success: true, post: formatBlogPost(post) });
+    } catch (error) {
+        console.error('[web/blog] admin get', error);
+        res.status(500).json({ success: false, message: 'Failed to fetch post.' });
     }
 };
 

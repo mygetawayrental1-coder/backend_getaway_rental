@@ -24,11 +24,11 @@ router.put('/plans/:id', authenticate, isAdmin, subscriptionController.updatePla
 router.delete('/plans/:id', authenticate, isAdmin, subscriptionController.deletePlan);
 router.post('/admin/users/:userId/subscriptions', authenticate, isAdmin, subscriptionController.adminAssignSubscription);
 
-// Owner routes - subscription management (ADMIN can subscribe for testing)
-router.post('/', authenticate, requireRole(ROLES.OWNER, ROLES.ADMIN), subscriptionController.subscribe);
-router.post('/subscribe', authenticate, requireRole(ROLES.OWNER, ROLES.ADMIN), subscriptionController.subscribe);
-router.get('/my', authenticate, requireRole(ROLES.OWNER, ROLES.ADMIN), subscriptionController.getMySubscription);
-router.get('/my-subscription', authenticate, requireRole(ROLES.OWNER, ROLES.ADMIN), subscriptionController.getMySubscription);
+// Users without a plan can purchase; owners can renew.
+router.post('/', authenticate, requireRole(ROLES.END_USER, ROLES.OWNER, ROLES.ADMIN), subscriptionController.subscribe);
+router.post('/subscribe', authenticate, requireRole(ROLES.END_USER, ROLES.OWNER, ROLES.ADMIN), subscriptionController.subscribe);
+router.get('/my', authenticate, requireRole(ROLES.END_USER, ROLES.OWNER, ROLES.ADMIN), subscriptionController.getMySubscription);
+router.get('/my-subscription', authenticate, requireRole(ROLES.END_USER, ROLES.OWNER, ROLES.ADMIN), subscriptionController.getMySubscription);
 router.post('/cancel', authenticate, requireRole(ROLES.OWNER, ROLES.ADMIN), subscriptionController.cancelSubscription);
 
 module.exports = router;

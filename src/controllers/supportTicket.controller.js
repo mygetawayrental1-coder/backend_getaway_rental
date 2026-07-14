@@ -34,7 +34,7 @@ function getTicketOwnerSelect() {
         },
         subscriptions: {
             where: {
-                status: 'ACTIVE',
+                status: { in: ['ACTIVE', 'Active'] },
                 endDate: { gt: new Date() },
             },
             take: 1,
@@ -434,11 +434,117 @@ const getAllTickets = async (req, res) => {
     }
 };
 
+/**
+ * PATCH /support/tickets/:id
+ * Admin edit of ticket fields (subject, category, description, priority, adminNotes).
+ */
+const updateTicket = async (req, res) => {
+    try {
+        const ticket = await findTicketByParam(req.params.id);
+        if (!ticket) {
+            return res.status(404).json({ success: false, message: 'Ticket not found.' });
+        }
+
+        const body = req.body || {};
+        const data = {};
+
+        if (body.subject !== undefined) {
+            const subject = String(body.subject || '').trim();
+            if (!subject) {
+                return res.status(400).json({ success: false, message: 'Subject cannot be empty.' });
+            }
+            data.subject = subject;
+        }
+
+        if (body.description !== undefined) {
+            const description = String(body.description || '').trim();
+            if (!description) {
+                return res.status(400).json({ success: false, message: 'Description cannot be empty.' });
+            }
+            data.description = description;
+        }
+
+        if (body.category !== undefined) {
+            const category = String(body.category || '').toLowerCase().trim();
+            if (!CATEGORIES.includes(category)) {
+                return res.status(400).json({
+                    success: false,
+                    message: `category must be one of: ${CATEGORIES.join(', ')}`,
+                });
+            }
+            data.category = category;
+        }
+
+        if (body.priority !== undefined) {
+            const priority = String(body.priority || '').toUpperCase();
+            if (!PRIORITIES.includes(priority)) {
+                return res.status(400).json({
+                    success: false,
+                    message: `priority must be one of: ${PRIORITIES.join(', ')}`,
+                });
+            }
+            data.priority = priority;
+        }
+
+        if (body.adminNotes !== undefined) {
+            data.adminNotes = body.adminNotes ? String(body.adminNotes) : null;
+        }
+
+        if (Object.keys(data).length === 0) {
+            return res.status(400).json({ success: false, message: 'No fields to update.' });
+        }
+
+        const updated = await prisma.supportTicket.update({
+            where: { id: ticket.id },
+            data,
+            include: {
+                user: { select: getTicketOwnerSelect() },
+                _count: { select: { replies: true } },
+            },
+        });
+
+        const { _count, user, ...rest } = updated;
+        res.json({
+            success: true,
+            data: {
+                ...rest,
+                user: shapeTicketOwner(user),
+                replyCount: _count.replies,
+            },
+        });
+    } catch (error) {
+        console.error('Update ticket error:', error);
+        res.status(500).json({ success: false, message: 'Failed to update ticket.' });
+    }
+};
+
+/**
+ * DELETE /support/tickets/:id
+ * Admin delete — removes ticket and cascaded replies.
+ */
+const deleteTicket = async (req, res) => {
+    try {
+        const ticket = await findTicketByParam(req.params.id);
+        if (!ticket) {
+            return res.status(404).json({ success: false, message: 'Ticket not found.' });
+        }
+
+        await prisma.supportTicket.delete({ where: { id: ticket.id } });
+
+        res.json({ success: true, message: 'Ticket deleted.' });
+    } catch (error) {
+        console.error('Delete ticket error:', error);
+        res.status(500).json({ success: false, message: 'Failed to delete ticket.' });
+    }
+};
+
 module.exports = {
     createTicket,
     getMyTickets,
     getTicketById,
     replyToTicket,
     updateTicketStatus,
+    updateTicket,
+    deleteTicket,
     getAllTickets,
 };

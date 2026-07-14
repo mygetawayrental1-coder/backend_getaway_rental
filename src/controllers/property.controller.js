@@ -98,7 +98,7 @@ const getAvailability = async (req, res) => {
             return res.status(404).json({ success: false, message: 'Property not found.' });
         }
 
-        const [ownerBlocks, bookingBlocks, icalBlocks] = await Promise.all([
+        const [ownerBlocks, bookingBlocks, acceptedRequests, icalBlocks] = await Promise.all([
             prisma.propertyAvailability.findMany({
                 where: {
                     propertyId: property.id,
@@ -120,6 +120,22 @@ const getAvailability = async (req, res) => {
                 },
                 orderBy: { checkin: 'asc' },
             }),
+            prisma.guestRequest.findMany({
+                where: {
+                    propertyId: property.id,
+                    status: 'ACCEPTED',
+                    AND: [
+                        { checkin: { not: null } },
+                        { checkout: { not: null } },
+                        { checkin: { lte: rangeEnd } },
+                        { checkout: { gt: rangeStart } },
+                    ],
+                },
+                select: {
+                    checkin: true,
+                    checkout: true,
+                },
+            }),
             prisma.icalEvent.findMany({
                 where: {
                     propertyId: property.id,
@@ -134,13 +150,21 @@ const getAvailability = async (req, res) => {
             }),
         ]);
 
-        res.json({
-            success: true,
-            blockedByOwner: ownerBlocks.map((row) => formatDateOnly(row.date)),
-            blockedByBookings: bookingBlocks.map((b) => ({
+        const stayBlocks = [
+            ...bookingBlocks.map((b) => ({
                 checkin: b.checkin,
                 checkout: b.checkout,
             })),
+            ...acceptedRequests.map((r) => ({
+                checkin: r.checkin,
+                checkout: r.checkout,
+            })),
+        ];
+
+        res.json({
+            success: true,
+            blockedByOwner: ownerBlocks.map((row) => formatDateOnly(row.date)),
+            blockedByBookings: stayBlocks,
             blockedByIcal: icalBlocks.map((b) => ({
                 checkin: b.dtStart,
                 checkout: b.dtEnd,
