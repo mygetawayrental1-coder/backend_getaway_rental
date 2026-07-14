@@ -1,11 +1,35 @@
 const prisma = require('../config/database');
 
 const FIELD_TYPES = ['text', 'number', 'boolean', 'select', 'textarea'];
-const SECTIONS = ['features', 'rules', 'pricing', 'details'];
+/** Must match Admin Dynamic Fields sections + website / Flutter listing form. */
+const SECTIONS = [
+    'basic',
+    'location',
+    'capacity',
+    'pricing',
+    'rules',
+    'suitability',
+    'photos',
+    'amenities',
+    'calendar',
+    'features',
+    'details',
+];
+
 
 function validateFieldName(name) {
     // Alphanumeric and underscores only, must start with a letter
     return /^[a-zA-Z][a-zA-Z0-9_]*$/.test(name);
+}
+
+/** Keep the section the admin chose — never silently remap capacity → basic. */
+function normalizeSection(section) {
+    const raw = section != null ? String(section).trim().toLowerCase() : '';
+    if (!raw) return 'details';
+    if (raw === 'pricing_standard') return 'pricing';
+    if (raw === 'rules_standard') return 'rules';
+    if (/^[a-z][a-z0-9_]*$/.test(raw)) return raw;
+    return 'details';
 }
 
 /**
@@ -68,7 +92,7 @@ const createDynamicField = async (req, res) => {
             });
         }
 
-        const activeSection = section && SECTIONS.includes(section) ? section : 'features';
+        const activeSection = normalizeSection(section);
 
         // Format options if type is select
         let parsedOptions = null;
@@ -171,7 +195,7 @@ const updateDynamicField = async (req, res) => {
 
         if (required !== undefined) updateData.required = Boolean(required);
         if (placeholder !== undefined) updateData.placeholder = placeholder ? String(placeholder).trim() : null;
-        if (section !== undefined && SECTIONS.includes(section)) updateData.section = section;
+        if (section !== undefined) updateData.section = normalizeSection(section);
         if (isActive !== undefined) updateData.isActive = Boolean(isActive);
 
         const field = await prisma.dynamicField.update({
