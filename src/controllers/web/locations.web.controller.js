@@ -4,6 +4,7 @@ const {
     getPagination,
     propertyWhereForCatalogLocation,
 } = require('../../utils/helpers');
+const { collectCityIdsForLocation } = require('../../utils/locationHierarchy');
 
 function buildOrder(sort) {
     switch (sort) {
@@ -21,22 +22,30 @@ function buildOrder(sort) {
     }
 }
 
-/** Count / list where: FK first, string fallback so old listings still count. */
-function propertyLocationWhere(loc) {
-    return propertyWhereForCatalogLocation(loc, { activeOnly: true });
+async function propertyLocationWhere(loc) {
+    const cityIds = await collectCityIdsForLocation(loc);
+    return propertyWhereForCatalogLocation(loc, { activeOnly: true, cityIds });
 }
 
 exports.listLocations = async (req, res) => {
     try {
+        const { type, forCards } = req.query;
+        const where = { isActive: true };
+        if (type) {
+            where.type = String(type).toUpperCase();
+        } else if (forCards === '1' || forCards === 'true') {
+            where.type = 'STATE';
+        }
+
         const locations = await prisma.location.findMany({
-            where: { isActive: true },
+            where,
             orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
         });
 
         const withCounts = await Promise.all(
             locations.map(async (loc) => {
                 const rentalCount = await prisma.property.count({
-                    where: propertyLocationWhere(loc),
+                    where: await propertyLocationWhere(loc),
                 });
                 return { ...loc, rentalCount };
             }),
@@ -62,7 +71,7 @@ exports.getBySlug = async (req, res) => {
         }
 
         const rentalCount = await prisma.property.count({
-            where: propertyLocationWhere(location),
+            where: await propertyLocationWhere(location),
         });
 
         res.json({ success: true, location: { ...location, rentalCount } });
@@ -87,7 +96,7 @@ exports.getLocationProperties = async (req, res) => {
         }
 
         const pagination = getPagination(page, limit);
-        const where = propertyLocationWhere(location);
+        const where = await propertyLocationWhere(location);
         const orderBy = buildOrder(sort);
 
         const [rows, total] = await Promise.all([
@@ -123,6 +132,7 @@ exports.getLocationProperties = async (req, res) => {
             location: {
                 slug: location.slug,
                 name: location.name,
+                type: location.type,
             },
             properties,
             total,
@@ -139,12 +149,13 @@ exports.listAllAdmin = async (req, res) => {
     try {
         const locations = await prisma.location.findMany({
             orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+            include: { parent: { select: { id: true, name: true, slug: true, type: true } } },
         });
 
         const withCounts = await Promise.all(
             locations.map(async (loc) => {
                 const rentalCount = await prisma.property.count({
-                    where: propertyLocationWhere(loc),
+                    where: await propertyLocationWhere(loc),
                 });
                 return { ...loc, rentalCount };
             }),
@@ -157,9 +168,27 @@ exports.listAllAdmin = async (req, res) => {
     }
 };
 
+function normalizeType(raw) {
+    const t = String(raw || '').toUpperCase();
+    if (t === 'COUNTRY' || t === 'STATE' || t === 'CITY') return t;
+    return null;
+}
+
 exports.createLocation = async (req, res) => {
     try {
-        const { name, slug, parentSlug, image, description, lat, lng, sortOrder, isActive } = req.body;
+        const {
+            name,
+            slug,
+            parentSlug,
+            parentId,
+            type,
+            image,
+            description,
+            lat,
+            lng,
+            sortOrder,
+            isActive,
+        } = req.body;
 
         if (!name || !slug || !image) {
             return res.status(400).json({
@@ -168,15 +197,52 @@ exports.createLocation = async (req, res) => {
             });
         }
 
+        const locType = normalizeType(type) || 'CITY';
+        let resolvedParentId =
+            parentId != null && String(parentId).trim() !== ''
+                ? parseInt(String(parentId), 10)
+                : null;
+        let resolvedParentSlug = parentSlug ? String(parentSlug).trim() : null;
+
+        if (resolvedParentId) {
+            const parent = await prisma.location.findUnique({ where: { id: resolvedParentId } });
+            if (!parent) {
+                return res.status(400).json({ success: false, message: 'Invalid parentId.' });
+            }
+            if (locType === 'STATE' && parent.type !== 'COUNTRY') {
+                return res
+                    .status(400)
+                    .json({ success: false, message: 'State parent must be a Country.' });
+            }
+            if (locType === 'CITY' && parent.type !== 'STATE') {
+                return res
+                    .status(400)
+                    .json({ success: false, message: 'City parent must be a State.' });
+            }
+            if (locType === 'COUNTRY') {
+                return res
+                    .status(400)
+                    .json({ success: false, message: 'Country cannot have a parent.' });
+            }
+            resolvedParentSlug = parent.slug;
+        } else if (locType === 'STATE' || locType === 'CITY') {
+            return res.status(400).json({
+                success: false,
+                message: `${locType === 'STATE' ? 'State' : 'City'} requires a parent.`,
+            });
+        }
+
         const location = await prisma.location.create({
             data: {
                 name: String(name).trim(),
                 slug: String(slug).trim().toLowerCase(),
-                parentSlug: parentSlug ? String(parentSlug).trim() : null,
+                type: locType,
+                parentId: locType === 'COUNTRY' ? null : resolvedParentId,
+                parentSlug: locType === 'COUNTRY' ? null : resolvedParentSlug,
                 image: String(image).trim(),
                 description: description ? String(description).trim() : null,
-                lat: lat != null ? parseFloat(lat) : null,
-                lng: lng != null ? parseFloat(lng) : null,
+                lat: lat != null && lat !== '' ? parseFloat(lat) : null,
+                lng: lng != null && lng !== '' ? parseFloat(lng) : null,
                 sortOrder: sortOrder != null ? parseInt(sortOrder, 10) : 0,
                 isActive: isActive !== undefined ? Boolean(isActive) : true,
             },
@@ -195,8 +261,19 @@ exports.createLocation = async (req, res) => {
 exports.updateLocation = async (req, res) => {
     try {
         const { slug } = req.params;
-        const { name, newSlug, parentSlug, image, description, lat, lng, sortOrder, isActive } =
-            req.body;
+        const {
+            name,
+            newSlug,
+            parentSlug,
+            parentId,
+            type,
+            image,
+            description,
+            lat,
+            lng,
+            sortOrder,
+            isActive,
+        } = req.body;
 
         const existing = await prisma.location.findUnique({ where: { slug } });
         if (!existing) {
@@ -206,7 +283,6 @@ exports.updateLocation = async (req, res) => {
         const data = {};
         if (name !== undefined) data.name = String(name).trim();
         if (newSlug !== undefined) data.slug = String(newSlug).trim().toLowerCase();
-        if (parentSlug !== undefined) data.parentSlug = parentSlug ? String(parentSlug).trim() : null;
         if (image !== undefined) data.image = String(image).trim();
         if (description !== undefined) {
             data.description = description ? String(description).trim() : null;
@@ -215,6 +291,59 @@ exports.updateLocation = async (req, res) => {
         if (lng !== undefined) data.lng = lng != null && lng !== '' ? parseFloat(lng) : null;
         if (sortOrder !== undefined) data.sortOrder = parseInt(sortOrder, 10) || 0;
         if (isActive !== undefined) data.isActive = Boolean(isActive);
+
+        const nextType = type !== undefined ? normalizeType(type) || existing.type : existing.type;
+        if (type !== undefined) data.type = nextType;
+
+        if (parentId !== undefined || parentSlug !== undefined || type !== undefined) {
+            let resolvedParentId =
+                parentId !== undefined
+                    ? parentId != null && String(parentId).trim() !== ''
+                        ? parseInt(String(parentId), 10)
+                        : null
+                    : existing.parentId;
+
+            if (parentId === undefined && parentSlug !== undefined) {
+                if (parentSlug) {
+                    const p = await prisma.location.findUnique({
+                        where: { slug: String(parentSlug).trim() },
+                    });
+                    resolvedParentId = p?.id ?? null;
+                } else {
+                    resolvedParentId = null;
+                }
+            }
+
+            if (nextType === 'COUNTRY') {
+                data.parentId = null;
+                data.parentSlug = null;
+            } else {
+                if (!resolvedParentId) {
+                    return res.status(400).json({
+                        success: false,
+                        message: `${nextType} requires a parent.`,
+                    });
+                }
+                const parent = await prisma.location.findUnique({
+                    where: { id: resolvedParentId },
+                });
+                if (!parent) {
+                    return res.status(400).json({ success: false, message: 'Invalid parent.' });
+                }
+                if (nextType === 'STATE' && parent.type !== 'COUNTRY') {
+                    return res
+                        .status(400)
+                        .json({ success: false, message: 'State parent must be a Country.' });
+                }
+                if (nextType === 'CITY' && parent.type !== 'STATE') {
+                    return res
+                        .status(400)
+                        .json({ success: false, message: 'City parent must be a State.' });
+                }
+                data.parentId = parent.id;
+                data.parentSlug = parent.slug;
+            }
+        }
 
         const location = await prisma.location.update({
             where: { slug },

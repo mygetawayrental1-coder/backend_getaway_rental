@@ -79,16 +79,23 @@ function buildLocationFilter(term) {
 }
 
 /**
- * Prefer FK binding; keep string contains so existing listings / URLs still work.
- * `loc` = Location row { id, name }
+ * Prefer FK binding with hierarchy roll-up; keep string contains for legacy rows.
+ * `loc` = Location row { id, name, type? }
+ * `cityIds` = optional precomputed descendant city ids (from collectCityIdsForLocation)
  */
-function propertyWhereForCatalogLocation(loc, { activeOnly = true } = {}) {
+function propertyWhereForCatalogLocation(loc, { activeOnly = true, cityIds = null } = {}) {
     if (!loc?.id) return null;
     const name = String(loc.name || '').trim();
-    const or = [{ locationId: loc.id }];
+    const ids =
+        Array.isArray(cityIds) && cityIds.length > 0 ? cityIds : [loc.id];
+
+    const or = [{ locationId: { in: ids } }];
     if (name) {
         or.push({ location: { contains: name, mode: 'insensitive' } });
         or.push({ state: { contains: name, mode: 'insensitive' } });
+        if (loc.type === 'COUNTRY') {
+            or.push({ country: { contains: name, mode: 'insensitive' } });
+        }
     }
     const where = { OR: or };
     if (activeOnly) where.status = 'Active';

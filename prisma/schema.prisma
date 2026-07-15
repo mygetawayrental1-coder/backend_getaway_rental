@@ -765,23 +765,36 @@ model BlogPost {
 }
 
 // Location / destination entries for homepage & search
+// Hierarchy: COUNTRY → STATE → CITY (Property.locationId should point at CITY)
+enum LocationType {
+  COUNTRY
+  STATE
+  CITY
+}
+
 model Location {
-  id          Int      @id @default(autoincrement())
+  id          Int          @id @default(autoincrement())
   name        String
-  slug        String   @unique
-  parentSlug  String?  // for nested: country → state → city
+  slug        String       @unique
+  type        LocationType @default(CITY)
+  parentId    Int?
+  parent      Location?    @relation("LocationTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children    Location[]   @relation("LocationTree")
+  parentSlug  String? // legacy soft parent; kept for migration / SEO compat
   image       String
   description String?
   lat         Float?
   lng         Float?
-  sortOrder   Int      @default(0)
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  sortOrder   Int          @default(0)
+  isActive    Boolean      @default(true)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
 
   properties Property[]
 
   @@index([parentSlug])
+  @@index([parentId])
+  @@index([type])
   @@index([isActive])
 }
 
@@ -848,7 +861,7 @@ model DynamicField {
   options     String?  // JSON string array for select: '["Included", "Paid"]'
   required    Boolean  @default(false)
   placeholder String?
-  section     String   @default("features") // e.g. "features" | "rules" | "pricing" | "details"
+  section     String   @default("details") // e.g. "capacity" | "amenities" | "rules" | "details"
   isActive    Boolean  @default(true)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt

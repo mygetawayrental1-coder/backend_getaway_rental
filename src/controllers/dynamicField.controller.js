@@ -22,12 +22,13 @@ function validateFieldName(name) {
     return /^[a-zA-Z][a-zA-Z0-9_]*$/.test(name);
 }
 
-/** Keep the section the admin chose — never silently remap capacity → basic. */
+/** Keep the section the admin chose — never silently remap (e.g. capacity → features). */
 function normalizeSection(section) {
     const raw = section != null ? String(section).trim().toLowerCase() : '';
     if (!raw) return 'details';
     if (raw === 'pricing_standard') return 'pricing';
     if (raw === 'rules_standard') return 'rules';
+    // Accept any slug so Capacity / Suitability / etc. always stick.
     if (/^[a-z][a-z0-9_]*$/.test(raw)) return raw;
     return 'details';
 }
@@ -92,6 +93,12 @@ const createDynamicField = async (req, res) => {
             });
         }
 
+        if (section == null || String(section).trim() === '') {
+            return res.status(400).json({
+                success: false,
+                message: 'Section is required (e.g. capacity, amenities, basic).',
+            });
+        }
         const activeSection = normalizeSection(section);
 
         // Format options if type is select

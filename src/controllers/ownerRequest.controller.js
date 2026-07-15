@@ -220,7 +220,12 @@ const getMyRequests = async (req, res) => {
 // Get all requests (Admin only)
 const getAllRequests = async (req, res) => {
     try {
+        const { type } = req.query;
+        const where = {};
+        if (type) where.type = String(type).toUpperCase();
+
         const requests = await prisma.ownerRequest.findMany({
+            where,
             include: {
                 user: {
                     select: {

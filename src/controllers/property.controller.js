@@ -363,7 +363,7 @@ const createProperty = async (req, res) => {
             if (owner) ownerId = owner.id;
         }
 
-        // Resolve catalog Location (Admin Locations) — sync display strings from it
+        // Resolve catalog CITY — sync country / state / city display fields
         let resolvedLocationId = null;
         let locationText = location;
         let stateText = state;
@@ -380,18 +380,43 @@ const createProperty = async (req, res) => {
                         message: 'Invalid location. Pick a destination from the list.',
                     });
                 }
-                resolvedLocationId = catalog.id;
-                locationText = catalog.name;
-                if (catalog.lat != null) latText = String(catalog.lat);
-                if (catalog.lng != null) lngText = String(catalog.lng);
-                // If parent exists, use parent name as state when state not provided
-                if (!stateText && catalog.parentSlug) {
-                    const parent = await prisma.location.findUnique({
-                        where: { slug: catalog.parentSlug },
+                if (catalog.type !== 'CITY') {
+                    return res.status(400).json({
+                        success: false,
+                        message: 'Select a City (not a country or state).',
                     });
-                    if (parent) stateText = parent.name;
+                }
+                const { syncPropertyFieldsFromCity } = require('../utils/locationHierarchy');
+                try {
+                    const synced = await syncPropertyFieldsFromCity(catalog);
+                    resolvedLocationId = synced.locationId;
+                    locationText = synced.location;
+                    stateText = synced.state;
+                    countryText = synced.country;
+                    // Prefer exact map pin from client; fall back to city center
+                    const hasClientPin =
+                        latitude != null &&
+                        String(latitude).trim() !== '' &&
+                        longitude != null &&
+                        String(longitude).trim() !== '';
+                    if (!hasClientPin) {
+                        if (synced.latitude) latText = synced.latitude;
+                        if (synced.longitude) lngText = synced.longitude;
+                    }
+                } catch (e) {
+                    return res.status(400).json({
+                        success: false,
+                        message: e.message || 'Select a City from the list.',
+                    });
                 }
             }
+        }
+
+        if (!resolvedLocationId) {
+            return res.status(400).json({
+                success: false,
+                message: 'Location is required. Select Country → State → City.',
+            });
         }
 
         if (!locationText || !String(locationText).trim()) {
@@ -752,7 +777,7 @@ const updateProperty = async (req, res) => {
             if (updateData[field] !== undefined) data[field] = updateData[field] ? new Date(updateData[field]) : null;
         });
 
-        // Bind to Admin Location catalog when locationId is sent
+        // Bind to Admin Location catalog when locationId is sent (CITY only)
         if (updateData.locationId !== undefined) {
             const raw = updateData.locationId;
             if (raw === null || raw === '' || raw === 'null') {
@@ -772,15 +797,34 @@ const updateProperty = async (req, res) => {
                         message: 'Invalid location. Pick a destination from the list.',
                     });
                 }
-                data.locationId = catalog.id;
-                data.location = catalog.name;
-                if (catalog.lat != null) data.latitude = String(catalog.lat);
-                if (catalog.lng != null) data.longitude = String(catalog.lng);
-                if (updateData.state === undefined && catalog.parentSlug) {
-                    const parent = await prisma.location.findUnique({
-                        where: { slug: catalog.parentSlug },
+                if (catalog.type !== 'CITY') {
+                    return res.status(400).json({
+                        success: false,
+                        message: 'Select a City (not a country or state).',
                     });
-                    if (parent) data.state = parent.name;
+                }
+                const { syncPropertyFieldsFromCity } = require('../utils/locationHierarchy');
+                try {
+                    const synced = await syncPropertyFieldsFromCity(catalog);
+                    data.locationId = synced.locationId;
+                    data.location = synced.location;
+                    data.state = synced.state;
+                    data.country = synced.country;
+                    // Keep owner's exact map pin when they sent lat/lng on this save
+                    const hasClientPin =
+                        updateData.latitude != null &&
+                        String(updateData.latitude).trim() !== '' &&
+                        updateData.longitude != null &&
+                        String(updateData.longitude).trim() !== '';
+                    if (!hasClientPin) {
+                        if (synced.latitude) data.latitude = synced.latitude;
+                        if (synced.longitude) data.longitude = synced.longitude;
+                    }
+                } catch (e) {
+                    return res.status(400).json({
+                        success: false,
+                        message: e.message || 'Select a City from the list.',
+                    });
                 }
             }
         }
@@ -908,7 +952,12 @@ const getPropertiesByLocation = async (req, res) => {
                 },
             });
             if (catalog) {
-                const locFilter = propertyWhereForCatalogLocation(catalog, { activeOnly: false });
+                const { collectCityIdsForLocation } = require('../utils/locationHierarchy');
+                const cityIds = await collectCityIdsForLocation(catalog);
+                const locFilter = propertyWhereForCatalogLocation(catalog, {
+                    activeOnly: false,
+                    cityIds,
+                });
                 if (locFilter?.OR) where.OR = locFilter.OR;
             } else {
                 where.OR = [

@@ -105,7 +105,12 @@ exports.searchProperties = async (req, res) => {
         }
 
         if (catalogLoc) {
-            const locFilter = propertyWhereForCatalogLocation(catalogLoc, { activeOnly: false });
+            const { collectCityIdsForLocation } = require('../../utils/locationHierarchy');
+            const cityIds = await collectCityIdsForLocation(catalogLoc);
+            const locFilter = propertyWhereForCatalogLocation(catalogLoc, {
+                activeOnly: false,
+                cityIds,
+            });
             if (locFilter?.OR) andConditions.push({ OR: locFilter.OR });
         } else if (location_name) {
             const locationFilter = buildLocationFilter(location_name);
