@@ -91,13 +91,23 @@ const sendEmail = async ({ to, bcc, subject, html, text }) => {
     throw new Error('Brevo is not configured (need BREVO_API_KEY or SMTP credentials).');
   }
 
+  const recipients = toAddressList(to);
+  if (recipients.length === 0) {
+    throw new Error('Cannot send email: missing recipient address.');
+  }
+
   try {
     if (brevoApiKey) {
-      return await sendViaBrevoApi({ to, bcc, subject, html, text });
+      return await sendViaBrevoApi({ to: recipients.map((r) => r.email), bcc, subject, html, text });
     }
-    return await sendViaSmtp({ to, bcc, subject, html, text });
+    return await sendViaSmtp({ to: recipients.map((r) => r.email), bcc, subject, html, text });
   } catch (error) {
-    console.error('Brevo email error:', error.message || error);
+    console.error(
+      'Brevo email error:',
+      error.message || error,
+      '| to:',
+      recipients.map((r) => r.email).join(', '),
+    );
     throw error;
   }
 };

@@ -125,7 +125,10 @@ const createGuestRequest = async (req, res) => {
             return res.status(400).json({ success: false, message: 'Invalid or expired security code.' });
         }
 
-        if (!propertyId || !fullName || !email) {
+        const guestEmail = String(email || '').trim();
+        const guestName = String(fullName || '').trim();
+
+        if (!propertyId || !guestName || !guestEmail) {
             return res.status(400).json({
                 success: false,
                 message: 'Property, full name, and email are required.',
@@ -154,6 +157,13 @@ const createGuestRequest = async (req, res) => {
             });
         }
 
+        if (!property.owner?.email) {
+            return res.status(400).json({
+                success: false,
+                message: 'This property has no owner email on file. Please contact support.',
+            });
+        }
+
         if (checkin && checkout) {
             const conflicts = await findStayConflicts(property.id, checkin, checkout);
             if (
@@ -173,8 +183,8 @@ const createGuestRequest = async (req, res) => {
         const guestRequest = await prisma.guestRequest.create({
             data: {
                 propertyId: property.id,
-                fullName,
-                email,
+                fullName: guestName,
+                email: guestEmail,
                 phone,
                 message,
                 checkin: checkin ? new Date(checkin) : null,
@@ -191,38 +201,52 @@ const createGuestRequest = async (req, res) => {
 
         const mailData = emailPayload(guestRequest, property);
 
-        // Respond immediately; emails/notifications run in the background (avoids SMTP timeouts blocking the client).
-        void (async () => {
-            try {
-                await sendGuestRequestNotification(property.owner.email, mailData);
-            } catch (emailError) {
-                console.error('Owner email failed:', emailError.message);
-            }
+        // Await both emails (in parallel) before responding — fire-and-forget after res.json()
+        // was dropping the guest confirmation when the request lifecycle ended early.
+        const [ownerMail, guestMail] = await Promise.allSettled([
+            sendGuestRequestNotification(property.owner.email, mailData),
+            sendGuestRequestConfirmationToGuest(guestEmail, mailData),
+        ]);
 
-            try {
-                await sendGuestRequestConfirmationToGuest(email, mailData);
-            } catch (emailError) {
-                console.error('Guest confirmation email failed:', emailError.message);
-            }
+        if (ownerMail.status === 'rejected') {
+            console.error(
+                'Owner email failed:',
+                ownerMail.reason?.message || ownerMail.reason,
+                '| to:',
+                property.owner.email,
+            );
+        } else {
+            console.log('Owner rent-request email sent | to:', property.owner.email);
+        }
 
-            try {
-                await createTypedNotification({
-                    userId: property.owner.id,
-                    type: NOTIFICATION_TYPES.GUEST_REQUEST_NEW,
-                    data: {
-                        guestRequestId: guestRequest.id,
-                        propertyId: property.id,
-                        propertyName: property.propertyName,
-                    },
-                    vars: {
-                        propertyName: property.propertyName,
-                        guestName: fullName,
-                    },
-                });
-            } catch (notifyErr) {
-                console.error('Owner dashboard notification failed:', notifyErr.message);
-            }
-        })();
+        if (guestMail.status === 'rejected') {
+            console.error(
+                'Guest confirmation email failed:',
+                guestMail.reason?.message || guestMail.reason,
+                '| to:',
+                guestEmail,
+            );
+        } else {
+            console.log('Guest confirmation email sent | to:', guestEmail);
+        }
+
+        try {
+            await createTypedNotification({
+                userId: property.owner.id,
+                type: NOTIFICATION_TYPES.GUEST_REQUEST_NEW,
+                data: {
+                    guestRequestId: guestRequest.id,
+                    propertyId: property.id,
+                    propertyName: property.propertyName,
+                },
+                vars: {
+                    propertyName: property.propertyName,
+                    guestName,
+                },
+            });
+        } catch (notifyErr) {
+            console.error('Owner dashboard notification failed:', notifyErr.message);
+        }
 
         res.status(201).json({
             success: true,
