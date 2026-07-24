@@ -21,7 +21,16 @@ function startOfDay(value) {
     return d;
 }
 
-function emailPayload(request, property) {
+const TEMP_QUOTE_NOTE =
+    'This is a temporary estimate and can change after discussions with the owner.';
+
+function formatUsd(amount) {
+    const n = Number(amount);
+    if (!Number.isFinite(n)) return null;
+    return `$${n.toFixed(2)}`;
+}
+
+function emailPayload(request, property, quote = {}) {
     return {
         propertyName: property.propertyName,
         fullName: request.fullName,
@@ -31,6 +40,13 @@ function emailPayload(request, property) {
         checkout: request.checkout,
         guests: request.guests,
         message: request.message,
+        nights: quote.nights ?? null,
+        quotedNightlyRate: quote.quotedNightlyRate ?? null,
+        quotedSubtotal: quote.quotedSubtotal ?? null,
+        quotedServiceFee: quote.quotedServiceFee ?? null,
+        quotedDynamicFees: quote.quotedDynamicFees ?? null,
+        quotedTotal: quote.quotedTotal ?? null,
+        quoteNote: TEMP_QUOTE_NOTE,
         ownerPhone: property.owner?.phoneNumber
             ? `${property.owner.countryCode || ''} ${property.owner.phoneNumber}`.trim()
             : null,
@@ -118,8 +134,24 @@ function conflictMessage(conflicts) {
 // Create guest request (PUBLIC - no auth required)
 const createGuestRequest = async (req, res) => {
     try {
-        const { propertyId, fullName, email, phone, message, checkin, checkout, guests, captchaId, captchaCode } =
-            req.body;
+        const {
+            propertyId,
+            fullName,
+            email,
+            phone,
+            message,
+            checkin,
+            checkout,
+            guests,
+            nights,
+            quotedNightlyRate,
+            quotedSubtotal,
+            quotedServiceFee,
+            quotedDynamicFees,
+            quotedTotal,
+            captchaId,
+            captchaCode,
+        } = req.body;
 
         if (!(await verifyCaptcha(captchaId, captchaCode))) {
             return res.status(400).json({ success: false, message: 'Invalid or expired security code.' });
@@ -134,6 +166,55 @@ const createGuestRequest = async (req, res) => {
                 message: 'Property, full name, and email are required.',
             });
         }
+
+        const quote = {
+            nights: Number.isFinite(Number(nights)) ? Number(nights) : null,
+            quotedNightlyRate: Number.isFinite(Number(quotedNightlyRate))
+                ? Number(quotedNightlyRate)
+                : null,
+            quotedSubtotal: Number.isFinite(Number(quotedSubtotal))
+                ? Number(quotedSubtotal)
+                : null,
+            quotedServiceFee: Number.isFinite(Number(quotedServiceFee))
+                ? Number(quotedServiceFee)
+                : null,
+            quotedDynamicFees: Number.isFinite(Number(quotedDynamicFees))
+                ? Number(quotedDynamicFees)
+                : null,
+            quotedTotal: Number.isFinite(Number(quotedTotal)) ? Number(quotedTotal) : null,
+        };
+
+        const quoteLines = [];
+        if (quote.nights != null) quoteLines.push(`Nights: ${quote.nights}`);
+        if (formatUsd(quote.quotedNightlyRate)) {
+            quoteLines.push(`Nightly rate: ${formatUsd(quote.quotedNightlyRate)}`);
+        }
+        if (formatUsd(quote.quotedSubtotal)) {
+            quoteLines.push(`Subtotal: ${formatUsd(quote.quotedSubtotal)}`);
+        }
+        if (formatUsd(quote.quotedServiceFee)) {
+            quoteLines.push(`Service fee: ${formatUsd(quote.quotedServiceFee)}`);
+        }
+        if (formatUsd(quote.quotedDynamicFees) && quote.quotedDynamicFees > 0) {
+            quoteLines.push(`Other fees: ${formatUsd(quote.quotedDynamicFees)}`);
+        }
+        if (formatUsd(quote.quotedTotal)) {
+            quoteLines.push(`Quoted total: ${formatUsd(quote.quotedTotal)}`);
+        }
+        const baseMessage = String(message || '').trim();
+        const messageWithQuote =
+            quoteLines.length > 0
+                ? [
+                      baseMessage,
+                      '',
+                      '--- Price estimate ---',
+                      ...quoteLines,
+                      TEMP_QUOTE_NOTE,
+                  ]
+                      .filter((line, idx, arr) => !(idx === 0 && line === ''))
+                      .join('\n')
+                      .trim()
+                : baseMessage || null;
 
         const property = await prisma.property.findFirst({
             where: { OR: [{ id: propertyId }, { propertyId }] },
@@ -186,7 +267,7 @@ const createGuestRequest = async (req, res) => {
                 fullName: guestName,
                 email: guestEmail,
                 phone,
-                message,
+                message: messageWithQuote,
                 checkin: checkin ? new Date(checkin) : null,
                 checkout: checkout ? new Date(checkout) : null,
                 guests: guests || 1,
@@ -199,7 +280,7 @@ const createGuestRequest = async (req, res) => {
             },
         });
 
-        const mailData = emailPayload(guestRequest, property);
+        const mailData = emailPayload(guestRequest, property, quote);
 
         // Await both emails (in parallel) before responding — fire-and-forget after res.json()
         // was dropping the guest confirmation when the request lifecycle ended early.

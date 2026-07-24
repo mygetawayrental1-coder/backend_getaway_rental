@@ -694,11 +694,16 @@ model TicketReply {
 // =============================================================
 
 model OwnerRequest {
-  id             String @id @default(cuid())
-  userId         String
-  user           User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id             String  @id @default(cuid())
+  /// Linked account when the requester is signed in; null for guest website submissions.
+  userId         String?
+  user           User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  type           String @default("CUSTOM_PRICING") // CUSTOM_PRICING | OTHER
+  /// Guest contact (website, not logged in). Prefer user relation when userId is set.
+  guestName      String?
+  guestEmail     String?
+
+  type           String @default("CUSTOM_PRICING") // CUSTOM_PRICING | OTHER | BECOME_OWNER
   requestedPrice Float
   numProperties  Int
   message        String?
@@ -712,6 +717,7 @@ model OwnerRequest {
 
   @@index([userId])
   @@index([status])
+  @@index([guestEmail])
 }
 
 // =============================================================

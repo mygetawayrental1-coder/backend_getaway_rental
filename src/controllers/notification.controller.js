@@ -160,71 +160,104 @@ const markRead = async (req, res) => {
  * POST /admin/notifications/broadcast
  * Broadcasts a message to owners, users, or all.
  */
+const ALLOWED_AUDIENCES = ['OWNERS', 'END_USERS', 'ALL'];
+const ALLOWED_CHANNELS = ['dashboard', 'email'];
+
 const broadcastNotification = async (req, res) => {
     try {
         const { targetAudience, channels, subject, message } = req.body;
-        
-        if (!targetAudience || !channels || !subject || !message) {
+
+        if (!targetAudience || !subject || !message) {
             return res.status(400).json({ success: false, message: 'Missing required fields.' });
         }
 
-        let where = {};
-        if (targetAudience === 'OWNERS') where.role = 'OWNER';
-        if (targetAudience === 'END_USERS') where.role = 'END_USER';
-        // 'ALL' means no role filter, but we typically exclude ADMIN unless 'ALL' explicitly
-        if (targetAudience === 'ALL') {
-            where.role = { not: 'ADMIN' }; // Don't broadcast to yourself by default
+        if (!ALLOWED_AUDIENCES.includes(targetAudience)) {
+            return res.status(400).json({
+                success: false,
+                message: `targetAudience must be one of: ${ALLOWED_AUDIENCES.join(', ')}`,
+            });
         }
+
+        const channelList = Array.isArray(channels) ? channels : [];
+        const validChannels = channelList.filter((c) => ALLOWED_CHANNELS.includes(c));
+        if (validChannels.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'Select at least one delivery channel (dashboard and/or email).',
+            });
+        }
+
+        const where = { isActive: true };
+        if (targetAudience === 'OWNERS') where.role = 'OWNER';
+        else if (targetAudience === 'END_USERS') where.role = 'END_USER';
+        else where.role = { not: 'ADMIN' };
 
         const users = await prisma.user.findMany({
             where,
-            select: { id: true, email: true, role: true }
+            select: { id: true, email: true, role: true },
         });
 
         if (users.length === 0) {
             return res.status(404).json({ success: false, message: 'No users found for this audience.' });
         }
 
-        const isDashboard = channels.includes('dashboard');
-        const isEmail = channels.includes('email');
+        const isDashboard = validChannels.includes('dashboard');
+        const isEmail = validChannels.includes('email');
+        let dashboardCount = 0;
+        let emailOk = 0;
+        let emailFailed = 0;
 
-        // Create Dashboard Notifications (skip END_USERs)
+        // Create Dashboard Notifications (skip END_USERs — no owner dashboard)
         if (isDashboard) {
-            const dashboardUsers = targetAudience === 'END_USERS' 
-                ? [] 
-                : users.filter(u => u.role !== 'END_USER');
-                
+            const dashboardUsers =
+                targetAudience === 'END_USERS'
+                    ? []
+                    : users.filter((u) => u.role !== 'END_USER');
+
             if (dashboardUsers.length > 0) {
-                const notificationsData = dashboardUsers.map(u => ({
+                const notificationsData = dashboardUsers.map((u) => ({
                     userId: u.id,
                     type: 'SYSTEM_ALERT',
-                    title: subject,
-                    body: message,
-                    isRead: false
+                    title: String(subject).trim(),
+                    body: String(message).trim(),
+                    isRead: false,
                 }));
                 await prisma.notification.createMany({ data: notificationsData });
+                dashboardCount = dashboardUsers.length;
             }
         }
 
-        // Send Emails in batches of 50
+        // Send emails and report delivery outcome (awaited, not fire-and-forget)
         if (isEmail) {
-            const emails = users.map(u => u.email);
+            const emails = users.map((u) => u.email).filter(Boolean);
             const BATCH_SIZE = 50;
-            
-            // Fire and forget
-            (async () => {
-                for (let i = 0; i < emails.length; i += BATCH_SIZE) {
-                    const batch = emails.slice(i, i + BATCH_SIZE);
-                    try {
-                        await sendBroadcastEmail(batch, subject, message);
-                    } catch (e) {
-                        console.error('Batch email error:', e);
-                    }
+            for (let i = 0; i < emails.length; i += BATCH_SIZE) {
+                const batch = emails.slice(i, i + BATCH_SIZE);
+                try {
+                    await sendBroadcastEmail(batch, String(subject).trim(), String(message).trim());
+                    emailOk += batch.length;
+                } catch (e) {
+                    console.error('Batch email error:', e);
+                    emailFailed += batch.length;
                 }
-            })();
+            }
         }
 
-        res.json({ success: true, message: `Broadcast successfully sent to ${users.length} users.` });
+        const parts = [];
+        if (isDashboard) parts.push(`${dashboardCount} in-app`);
+        if (isEmail) {
+            parts.push(
+                emailFailed > 0
+                    ? `${emailOk} email sent (${emailFailed} failed)`
+                    : `${emailOk} email sent`,
+            );
+        }
+
+        res.json({
+            success: emailFailed === 0 || dashboardCount > 0 || emailOk > 0,
+            message: `Broadcast queued for ${users.length} users (${parts.join(', ')}).`,
+            data: { audienceSize: users.length, dashboardCount, emailOk, emailFailed },
+        });
     } catch (error) {
         console.error('Broadcast error:', error);
         res.status(500).json({ success: false, message: 'Failed to send broadcast.' });

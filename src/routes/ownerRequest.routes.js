@@ -21,5 +21,6 @@ router.get('/', authenticate, isAdmin, ownerRequestController.getAllRequests);
 
 // Admin only: Update request status
 router.patch('/:id/status', authenticate, isAdmin, ownerRequestController.updateRequestStatus);
+router.delete('/:id', authenticate, isAdmin, ownerRequestController.deleteRequest);
 
 module.exports = router;

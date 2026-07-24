@@ -22,13 +22,15 @@ function validateFieldName(name) {
     return /^[a-zA-Z][a-zA-Z0-9_]*$/.test(name);
 }
 
-/** Keep the section the admin chose — never silently remap (e.g. capacity → features). */
+/** Keep the section the admin chose — never silently remap (e.g. capacity → features/details). */
 function normalizeSection(section) {
     const raw = section != null ? String(section).trim().toLowerCase() : '';
     if (!raw) return 'details';
     if (raw === 'pricing_standard') return 'pricing';
     if (raw === 'rules_standard') return 'rules';
-    // Accept any slug so Capacity / Suitability / etc. always stick.
+    // Known sections always win (Capacity must stay capacity).
+    if (SECTIONS.includes(raw)) return raw;
+    // Accept other slugs so future sections are not forced to "details".
     if (/^[a-z][a-z0-9_]*$/.test(raw)) return raw;
     return 'details';
 }

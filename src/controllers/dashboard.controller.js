@@ -95,10 +95,10 @@ async function getAdminStats() {
     const batch4 = await Promise.all([
         prisma.subscriptionPlan.count(),
         prisma.userSubscription.count({
-            where: { status: 'ACTIVE', endDate: { gt: now } },
+            where: { status: 'ACTIVE' },
         }),
         prisma.userSubscription.count({
-            where: { status: 'ACTIVE', endDate: { gte: monthStart, lt: monthEnd } },
+            where: { status: 'ACTIVE', startDate: { gte: monthStart, lt: monthEnd } },
         }),
         prisma.payout.count({ where: { status: 'PENDING' } }),
         prisma.payout.count({ where: { status: 'PROCESSING' } }),
@@ -116,7 +116,6 @@ async function getAdminStats() {
             by: ['userId'],
             where: {
                 status: 'ACTIVE',
-                endDate: { gt: now },
             },
         }),
     ]);

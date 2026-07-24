@@ -289,6 +289,12 @@ const sendGuestRequestNotification = async (ownerEmail, request) => {
         <p><strong>Check-in:</strong> ${formatRequestDate(request.checkin)}</p>
         <p><strong>Check-out:</strong> ${formatRequestDate(request.checkout)}</p>
         <p><strong>Guests:</strong> ${request.guests || 1}</p>
+        ${
+          request.quotedTotal != null
+            ? `<p><strong>Quoted total (estimate):</strong> $${Number(request.quotedTotal).toFixed(2)}</p>
+        <p style="color:#6b7280;font-size:13px;"><em>${request.quoteNote || 'This is a temporary estimate and can change after discussions with the owner.'}</em></p>`
+            : ''
+        }
         <p><strong>Message:</strong> ${request.message || 'No message'}</p>
       </div>
       <p>Sign in to your dashboard to accept or decline this request.</p>
@@ -299,7 +305,11 @@ const sendGuestRequestNotification = async (ownerEmail, request) => {
     to: ownerEmail,
     subject: `New rent request — ${request.propertyName}`,
     html,
-    text: `New rent request from ${request.fullName} (${guestPhone}) for ${request.propertyName}`,
+    text: `New rent request from ${request.fullName} (${guestPhone}) for ${request.propertyName}${
+      request.quotedTotal != null
+        ? ` | Quoted total (temporary): $${Number(request.quotedTotal).toFixed(2)}`
+        : ''
+    }`,
   });
 };
 
@@ -313,6 +323,12 @@ const sendGuestRequestConfirmationToGuest = async (guestEmail, request) => {
         <p><strong>Check-in:</strong> ${formatRequestDate(request.checkin)}</p>
         <p><strong>Check-out:</strong> ${formatRequestDate(request.checkout)}</p>
         <p><strong>Guests:</strong> ${request.guests || 1}</p>
+        ${
+          request.quotedTotal != null
+            ? `<p><strong>Quoted total (estimate):</strong> $${Number(request.quotedTotal).toFixed(2)}</p>
+        <p style="color:#6b7280;font-size:13px;"><em>${request.quoteNote || 'This is a temporary estimate and can change after discussions with the owner.'}</em></p>`
+            : ''
+        }
       </div>
       <p>Thank you for using MyGetawayRental.</p>
     </div>
@@ -322,7 +338,11 @@ const sendGuestRequestConfirmationToGuest = async (guestEmail, request) => {
     to: guestEmail,
     subject: `We received your request — ${request.propertyName}`,
     html,
-    text: `Your rental request for ${request.propertyName} was submitted.`,
+    text: `Your rental request for ${request.propertyName} was submitted.${
+      request.quotedTotal != null
+        ? ` Quoted total (temporary): $${Number(request.quotedTotal).toFixed(2)}.`
+        : ''
+    }`,
   });
 };
 
@@ -599,15 +619,26 @@ const sendInvoiceEmail = async (guestEmail, booking, payments) => {
   });
 };
 
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 const sendBroadcastEmail = async (emailAddresses, subject, messageBody) => {
+  const safeSubject = escapeHtml(subject);
+  const safeBody = escapeHtml(messageBody);
   const html = `
     <div style="font-family: 'Inter', Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b;">
       <div style="background-color: #4f46e5; padding: 24px; text-align: center; border-top-left-radius: 8px; border-top-right-radius: 8px;">
         <h1 style="color: #ffffff; margin: 0; font-size: 24px;">MyGetawayRental</h1>
       </div>
       <div style="padding: 32px; background-color: #ffffff; border: 1px solid #e2e8f0; border-top: none; border-bottom-left-radius: 8px; border-bottom-right-radius: 8px;">
-        <h2 style="color: #0f172a; margin-top: 0;">${subject}</h2>
-        <div style="color: #334155; line-height: 1.6; white-space: pre-wrap;">${messageBody}</div>
+        <h2 style="color: #0f172a; margin-top: 0;">${safeSubject}</h2>
+        <div style="color: #334155; line-height: 1.6; white-space: pre-wrap;">${safeBody}</div>
         <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 32px 0;" />
         <p style="margin: 0; color: #64748b; font-size: 14px;">Best regards,<br><strong>The MyGetawayRental Team</strong></p>
       </div>

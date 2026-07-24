@@ -10,6 +10,11 @@ const {
     formatPaginatedResponse,
     propertyWhereForCatalogLocation,
 } = require('../utils/helpers');
+const {
+    slugify,
+    sanitizePropertySeoFields,
+    ensureUniquePropertySlug,
+} = require('../utils/seo');
 
 const BLOCKING_BOOKING_STATUSES = ['CONFIRMED', 'ONGOING'];
 
@@ -426,15 +431,17 @@ const createProperty = async (req, res) => {
             });
         }
 
-        const baseSlug = String(propertyName || 'rental')
-            .toLowerCase()
-            .replace(/[^a-z0-9\s-]/g, '')
-            .replace(/\s+/g, '-')
-            .slice(0, 50);
-        const slug =
-            slugBody && String(slugBody).trim()
-                ? String(slugBody).trim()
-                : `${baseSlug || 'stay'}-${Date.now().toString(36)}`;
+        const baseSlug = slugify(propertyName || 'rental') || 'stay';
+        const requestedSlug = slugBody && String(slugBody).trim()
+            ? slugify(slugBody)
+            : `${baseSlug}-${Date.now().toString(36)}`;
+        if (!requestedSlug) {
+            return res.status(400).json({
+                success: false,
+                message: 'URL slug must contain letters or numbers.',
+            });
+        }
+        const slug = await ensureUniquePropertySlug(prisma, requestedSlug);
 
         const property = await prisma.property.create({
             data: {
@@ -518,7 +525,8 @@ const createProperty = async (req, res) => {
 const getAllProperties = async (req, res) => {
     try {
         const { page, limit, status, search, location } = req.query;
-        const pagination = getPagination(page, limit);
+        const isAdmin = req.user?.role === 'ADMIN';
+        const pagination = getPagination(page, limit, { maxLimit: isAdmin ? 2000 : 100 });
 
         const where = {};
         if (status) where.status = status;
@@ -750,8 +758,8 @@ const updateProperty = async (req, res) => {
         const data = {};
         const fields = [
             'propertyName', 'location', 'state', 'country', 'latitude', 'longitude',
-            'about', 'policyAndHouseRules', 'status', 'slug', 'rentalType', 'videoUrl', 'policyDetails',
-            'checkInTime', 'checkOutTime', 'seoTitle', 'seoDescription', 'seoKeywords', 'seoCanonicalUrl', 'seoBacklinks'
+            'about', 'policyAndHouseRules', 'status', 'rentalType', 'videoUrl', 'policyDetails',
+            'checkInTime', 'checkOutTime',
         ];
         const intFields = ['guests', 'bedrooms', 'bathrooms', 'kitchens', 'minRate', 'nightlyRate', 'weekendRate', 'weeklyRate', 'monthlyRate', 'areaM2', 'discountPercent', 'minNights', 'maxNights'];
         const boolFields = ['isFeatured', 'isNew'];
@@ -761,6 +769,16 @@ const updateProperty = async (req, res) => {
         fields.forEach(field => {
             if (updateData[field] !== undefined) data[field] = updateData[field];
         });
+
+        // Slug + SEO: sanitize, validate lengths, keep unique clean URLs
+        const seoPatch = sanitizePropertySeoFields(updateData);
+        if (seoPatch.error) {
+            return res.status(400).json({ success: false, message: seoPatch.error });
+        }
+        Object.assign(data, seoPatch.data);
+        if (data.slug && data.slug !== property.slug) {
+            data.slug = await ensureUniquePropertySlug(prisma, data.slug, property.id);
+        }
         intFields.forEach(field => {
             if (updateData[field] !== undefined) data[field] = parseInt(updateData[field]) || 0;
         });

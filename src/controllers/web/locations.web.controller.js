@@ -359,3 +359,37 @@ exports.updateLocation = async (req, res) => {
         res.status(500).json({ success: false, message: 'Failed to update location.' });
     }
 };
+
+/** DELETE /api/web/locations/:slug — Admin only */
+exports.deleteLocation = async (req, res) => {
+    try {
+        const { slug } = req.params;
+        const existing = await prisma.location.findUnique({
+            where: { slug },
+            include: {
+                children: { select: { id: true }, take: 1 },
+                properties: { select: { id: true }, take: 1 },
+            },
+        });
+        if (!existing) {
+            return res.status(404).json({ success: false, message: 'Location not found.' });
+        }
+        if (existing.children.length > 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'Delete or move child locations (states/cities) first.',
+            });
+        }
+        if (existing.properties.length > 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'This location still has properties linked. Reassign them first.',
+            });
+        }
+        await prisma.location.delete({ where: { slug } });
+        res.json({ success: true, message: 'Location deleted.' });
+    } catch (error) {
+        console.error('[web/locations] delete', error);
+        res.status(500).json({ success: false, message: 'Failed to delete location.' });
+    }
+};

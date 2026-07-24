@@ -77,12 +77,15 @@ const createCustomPricingRequest = async (req, res) => {
     }
 };
 
-// Create custom pricing request for GUEST (no auth required)
+// Create custom pricing request for GUEST (no auth required) — saved for Admin Custom Pricing
 const createGuestCustomPricingRequest = async (req, res) => {
     try {
         const { requestedPrice, numProperties, message, phone, captchaId, captchaCode, selectedPlanName, name, email } = req.body;
 
-        if (!name || !email) {
+        const guestName = String(name || '').trim();
+        const guestEmail = String(email || '').trim().toLowerCase();
+
+        if (!guestName || !guestEmail) {
             return res.status(400).json({ success: false, message: 'Name and email are required.' });
         }
 
@@ -95,23 +98,52 @@ const createGuestCustomPricingRequest = async (req, res) => {
             return res.status(400).json({ success: false, message: 'Invalid or expired captcha.' });
         }
 
-        // Dispatch emails asynchronously — no DB record (no linked user)
+        const finalMessage = selectedPlanName
+            ? `[Target Plan: ${selectedPlanName}]\n\n${message || ''}`.trim()
+            : message;
+
+        // Link to an existing account if this email already registered; otherwise store as guest.
+        const existingUser = await prisma.user.findFirst({
+            where: { email: { equals: guestEmail, mode: 'insensitive' } },
+            select: { id: true, firstName: true, email: true },
+        });
+
+        const newRequest = await prisma.ownerRequest.create({
+            data: {
+                userId: existingUser?.id || null,
+                guestName: existingUser ? null : guestName,
+                guestEmail: existingUser ? null : guestEmail,
+                requestedPrice: parseFloat(requestedPrice),
+                numProperties: parseInt(numProperties, 10),
+                message: finalMessage,
+                phone: String(phone).trim(),
+                type: 'CUSTOM_PRICING',
+                status: 'PENDING',
+            },
+            include: {
+                user: {
+                    select: { firstName: true, lastName: true, email: true },
+                },
+            },
+        });
+
         Promise.all([
-            sendCustomPricingOwnerConfirmation(email, name, selectedPlanName),
+            sendCustomPricingOwnerConfirmation(guestEmail, guestName, selectedPlanName),
             sendCustomPricingAdminNotification(
-                name,
-                email,
+                guestName,
+                guestEmail,
                 selectedPlanName,
                 requestedPrice,
                 phone,
                 message,
                 numProperties
-            )
-        ]).catch(err => console.error('[GuestCustomPricing] Email error:', err));
+            ),
+        ]).catch((err) => console.error('[GuestCustomPricing] Email error:', err));
 
-        res.status(200).json({
+        res.status(201).json({
             success: true,
             message: 'Your custom pricing request has been submitted. We will be in touch shortly.',
+            data: newRequest,
         });
     } catch (error) {
         console.error('Guest custom pricing request error:', error);
@@ -276,11 +308,28 @@ const updateRequestStatus = async (req, res) => {
     }
 };
 
+/** DELETE /owner-requests/:id — Admin only */
+const deleteRequest = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const existing = await prisma.ownerRequest.findUnique({ where: { id } });
+        if (!existing) {
+            return res.status(404).json({ success: false, message: 'Request not found.' });
+        }
+        await prisma.ownerRequest.delete({ where: { id } });
+        res.json({ success: true, message: 'Request deleted.' });
+    } catch (error) {
+        console.error('Delete owner request error:', error);
+        res.status(500).json({ success: false, message: 'Failed to delete request.' });
+    }
+};
+
 module.exports = {
     createCustomPricingRequest,
     createGuestCustomPricingRequest,
     createBecomeOwnerRequest,
     getAllRequests,
     getMyRequests,
-    updateRequestStatus
+    updateRequestStatus,
+    deleteRequest,
 };

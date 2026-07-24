@@ -3,10 +3,12 @@ const prisma = require('../config/database');
 const { getPagination, formatPaginatedResponse } = require('../utils/helpers');
 const { reconcileAllNonAdminRoles } = require('../services/subscriptionAccess.service');
 
+const ALLOWED_ROLES = ['ADMIN', 'OWNER', 'END_USER'];
+
 // Get all users (Admin only)
 const getAllUsers = async (req, res) => {
     try {
-        const { page, limit, role, search } = req.query;
+        const { page, limit, role, search, isActive, subscribed } = req.query;
         const pagination = getPagination(page, limit);
 
         // Keep RBAC labels accurate: no plan → USER, active plan → OWNER.
@@ -18,11 +20,21 @@ const getAllUsers = async (req, res) => {
 
         const where = {};
         if (role) where.role = role;
+        if (isActive === 'true' || isActive === '1') where.isActive = true;
+        if (isActive === 'false' || isActive === '0') where.isActive = false;
+        if (subscribed === 'true' || subscribed === '1') {
+            where.subscriptions = { some: { status: 'ACTIVE' } };
+        }
+        if (subscribed === 'false' || subscribed === '0' || subscribed === 'none') {
+            where.NOT = {
+                subscriptions: { some: { status: 'ACTIVE' } },
+            };
+        }
         if (search) {
             where.OR = [
-                { email: { contains: search } },
-                { firstName: { contains: search } },
-                { lastName: { contains: search } },
+                { email: { contains: search, mode: 'insensitive' } },
+                { firstName: { contains: search, mode: 'insensitive' } },
+                { lastName: { contains: search, mode: 'insensitive' } },
             ];
         }
 
@@ -50,10 +62,9 @@ const getAllUsers = async (req, res) => {
                     subscriptions: {
                         where: {
                             status: 'ACTIVE',
-                            endDate: { gt: new Date() },
                         },
                         take: 1,
-                        orderBy: { endDate: 'desc' },
+                        orderBy: { createdAt: 'desc' },
                         include: {
                             plan: { select: { id: true, name: true, maxProperties: true } },
                         },
@@ -167,8 +178,57 @@ const updateUser = async (req, res) => {
         if (paymentInstructions !== undefined) updateData.paymentInstructions = paymentInstructions;
 
         if (req.user.role === 'ADMIN') {
-            if (role) updateData.role = role;
             if (isActive !== undefined) updateData.isActive = isActive;
+
+            if (role !== undefined && role !== null && role !== '') {
+                if (!ALLOWED_ROLES.includes(role)) {
+                    return res.status(400).json({
+                        success: false,
+                        message: `role must be one of: ${ALLOWED_ROLES.join(', ')}`,
+                    });
+                }
+
+                const target = await prisma.user.findUnique({ where: { id } });
+                if (!target) {
+                    return res.status(404).json({
+                        success: false,
+                        message: 'User not found.',
+                    });
+                }
+
+                if (target.role === 'ADMIN' && role !== 'ADMIN') {
+                    const adminCount = await prisma.user.count({ where: { role: 'ADMIN' } });
+                    if (adminCount <= 1) {
+                        return res.status(400).json({
+                            success: false,
+                            message: 'Cannot demote the last administrator.',
+                        });
+                    }
+                }
+
+                if (role === 'OWNER') {
+                    const activeSub = await prisma.userSubscription.findFirst({
+                        where: { userId: id, status: 'ACTIVE' },
+                    });
+                    if (!activeSub) {
+                        return res.status(400).json({
+                            success: false,
+                            message:
+                                'Assign a subscription before setting role to OWNER. Owner status follows an active plan.',
+                        });
+                    }
+                }
+
+                if (role === 'END_USER') {
+                    // Cancel plans so role reconcile does not immediately re-promote to OWNER.
+                    await prisma.userSubscription.updateMany({
+                        where: { userId: id, status: { in: ['ACTIVE', 'PENDING'] } },
+                        data: { status: 'CANCELLED' },
+                    });
+                }
+
+                updateData.role = role;
+            }
         }
 
         // Update password if provided
@@ -213,12 +273,29 @@ const deleteUser = async (req, res) => {
     try {
         const { id } = req.params;
 
+        if (req.user.id === id) {
+            return res.status(400).json({
+                success: false,
+                message: 'You cannot delete your own account.',
+            });
+        }
+
         const user = await prisma.user.findUnique({ where: { id } });
         if (!user) {
             return res.status(404).json({
                 success: false,
                 message: 'User not found.',
             });
+        }
+
+        if (user.role === 'ADMIN') {
+            const adminCount = await prisma.user.count({ where: { role: 'ADMIN' } });
+            if (adminCount <= 1) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Cannot delete the last administrator.',
+                });
+            }
         }
 
         await prisma.user.delete({ where: { id } });
@@ -240,7 +317,7 @@ const deleteUser = async (req, res) => {
 const getAllOwners = async (req, res) => {
     try {
         const { page, limit, search, subscribed } = req.query;
-        const pagination = getPagination(page, limit);
+        const pagination = getPagination(page, limit, { maxLimit: 2000 });
         const now = new Date();
         const subscribedOnly = subscribed === 'true' || subscribed === '1';
 
@@ -250,7 +327,6 @@ const getAllOwners = async (req, res) => {
             where.subscriptions = {
                 some: {
                     status: 'ACTIVE',
-                    endDate: { gt: now },
                 },
             };
         }
@@ -290,10 +366,9 @@ const getAllOwners = async (req, res) => {
                     subscriptions: {
                         where: {
                             status: 'ACTIVE',
-                            endDate: { gt: now },
                         },
                         take: 1,
-                        orderBy: { endDate: 'desc' },
+                        orderBy: { createdAt: 'desc' },
                         include: {
                             plan: { select: { id: true, name: true, maxProperties: true } },
                         },
@@ -376,10 +451,9 @@ const getOwnerById = async (req, res) => {
                 subscriptions: {
                     where: {
                         status: { in: ['ACTIVE', 'Active'] },
-                        endDate: { gt: new Date() },
                     },
                     take: 1,
-                    orderBy: { endDate: 'desc' },
+                    orderBy: { createdAt: 'desc' },
                     include: {
                         plan: {
                             select: {

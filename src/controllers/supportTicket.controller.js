@@ -35,10 +35,9 @@ function getTicketOwnerSelect() {
         subscriptions: {
             where: {
                 status: { in: ['ACTIVE', 'Active'] },
-                endDate: { gt: new Date() },
             },
             take: 1,
-            orderBy: { endDate: 'desc' },
+            orderBy: { createdAt: 'desc' },
             select: {
                 id: true,
                 status: true,
@@ -284,6 +283,13 @@ const replyToTicket = async (req, res) => {
             return res.status(403).json({ success: false, message: 'Access denied.' });
         }
 
+        if (!isAdmin && ticket.status === 'CLOSED') {
+            return res.status(400).json({
+                success: false,
+                message: 'This ticket is closed. Please create a new support ticket.',
+            });
+        }
+
         const reply = await prisma.ticketReply.create({
             data: {
                 ticketId: ticket.id,
@@ -297,6 +303,14 @@ const replyToTicket = async (req, res) => {
             await prisma.supportTicket.update({
                 where: { id: ticket.id },
                 data: { status: 'IN_PROGRESS' },
+            });
+        }
+
+        // Owner follow-up on a resolved ticket reopens it for admin review.
+        if (!isAdmin && ticket.status === 'RESOLVED') {
+            await prisma.supportTicket.update({
+                where: { id: ticket.id },
+                data: { status: 'OPEN', resolvedAt: null },
             });
         }
 
@@ -397,7 +411,7 @@ const updateTicketStatus = async (req, res) => {
 const getAllTickets = async (req, res) => {
     try {
         const { status, priority, category, page, limit } = req.query;
-        const pagination = getPagination(page, limit);
+        const pagination = getPagination(page, limit, { maxLimit: 500 });
 
         const where = {};
         if (status) where.status = String(status).toUpperCase();

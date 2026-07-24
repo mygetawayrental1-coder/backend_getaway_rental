@@ -108,7 +108,7 @@ exports.createPost = async (req, res) => {
                 thumbnailUrl: thumbnailUrl.trim(),
                 authorName: authorName?.trim() || `${req.user.firstName} ${req.user.lastName}`.trim(),
                 isPublished: published,
-                publishedAt: new Date(),
+                publishedAt: published ? new Date() : null,
                 tags: tags ? JSON.stringify(tags) : null,
                 readTimeMin: readTimeMin != null ? parseInt(readTimeMin, 10) : null,
             },
@@ -187,6 +187,9 @@ exports.updatePost = async (req, res) => {
             data.isPublished = Boolean(body.isPublished);
             if (data.isPublished && !existing.isPublished) {
                 data.publishedAt = new Date();
+            }
+            if (!data.isPublished) {
+                data.publishedAt = null;
             }
         }
 

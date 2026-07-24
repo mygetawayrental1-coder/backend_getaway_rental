@@ -8,12 +8,11 @@ async function getActiveSubscription(userId) {
         where: {
             userId,
             status: 'ACTIVE',
-            endDate: { gt: new Date() },
         },
         include: {
             plan: true,
         },
-        orderBy: { endDate: 'desc' },
+        orderBy: { createdAt: 'desc' },
     });
 }
 
@@ -122,8 +121,6 @@ async function reconcileUserRole(userId) {
 
 /** Bulk sync roles for admin lists (no-plan → USER, active plan → OWNER). */
 async function reconcileAllNonAdminRoles() {
-    const now = new Date();
-
     await prisma.user.updateMany({
         where: {
             role: 'OWNER',
@@ -131,7 +128,6 @@ async function reconcileAllNonAdminRoles() {
                 subscriptions: {
                     some: {
                         status: 'ACTIVE',
-                        endDate: { gt: now },
                     },
                 },
             },
@@ -145,7 +141,6 @@ async function reconcileAllNonAdminRoles() {
             subscriptions: {
                 some: {
                     status: 'ACTIVE',
-                    endDate: { gt: now },
                 },
             },
         },

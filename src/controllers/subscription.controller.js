@@ -71,7 +71,7 @@ const getPlanById = async (req, res) => {
 // Create plan (Admin only)
 const createPlan = async (req, res) => {
     try {
-        const { name, price, specialPrice, duration, features, status } = req.body;
+        const { name, price, specialPrice, duration, features, status, maxProperties } = req.body;
 
         const plan = await prisma.subscriptionPlan.create({
             data: {
@@ -81,6 +81,7 @@ const createPlan = async (req, res) => {
                 duration,
                 features: stringifyJsonField(features),
                 status: status || 'Active',
+                maxProperties: maxProperties != null ? Math.max(1, parseInt(maxProperties, 10) || 1) : 1,
             },
         });
 
@@ -105,7 +106,7 @@ const createPlan = async (req, res) => {
 const updatePlan = async (req, res) => {
     try {
         const { id } = req.params;
-        const { name, price, specialPrice, duration, features, status } = req.body;
+        const { name, price, specialPrice, duration, features, status, maxProperties } = req.body;
 
         const existing = await prisma.subscriptionPlan.findUnique({ where: { id } });
         if (!existing) {
@@ -122,6 +123,9 @@ const updatePlan = async (req, res) => {
         if (duration) updateData.duration = duration;
         if (features !== undefined) updateData.features = stringifyJsonField(features);
         if (status) updateData.status = status;
+        if (maxProperties !== undefined) {
+            updateData.maxProperties = Math.max(1, parseInt(maxProperties, 10) || 1);
+        }
 
         const plan = await prisma.subscriptionPlan.update({
             where: { id },
@@ -206,12 +210,8 @@ const subscribe = async (req, res) => {
         }
 
         const startDate = new Date();
-        const endDate = new Date();
-        if (plan.duration === 'Monthly') {
-            endDate.setMonth(endDate.getMonth() + 1);
-        } else if (plan.duration === 'Yearly') {
-            endDate.setFullYear(endDate.getFullYear() + 1);
-        }
+        // Plans do not expire — keep a far-future endDate for DB schema only.
+        const endDate = new Date('9999-12-31T00:00:00.000Z');
 
         // Payment gateway not wired yet — activate immediately so owners can list properties.
         const activateNow = process.env.SUBSCRIPTION_REQUIRE_PAYMENT !== 'true';
@@ -222,7 +222,6 @@ const subscribe = async (req, res) => {
                 where: {
                     userId,
                     status: { in: ['ACTIVE', 'PENDING'] },
-                    endDate: { gt: new Date() },
                 },
             });
 
@@ -339,7 +338,8 @@ const adminAssignSubscription = async (req, res) => {
         const { planId, isCustom, customName, customMaxProperties, customDurationMonths } = req.body;
 
         let finalPlanId = planId;
-        let endDate = new Date();
+        // Plans do not expire — keep a far-future endDate for DB schema only.
+        const endDate = new Date('9999-12-31T00:00:00.000Z');
 
         // 1. If custom, create a new SubscriptionPlan on the fly
         if (isCustom) {
@@ -354,7 +354,6 @@ const adminAssignSubscription = async (req, res) => {
                 }
             });
             finalPlanId = newPlan.id;
-            endDate.setMonth(endDate.getMonth() + (parseInt(customDurationMonths, 10) || 12));
         } else {
             // 2. Predefined plan
             if (!planId) {
@@ -362,15 +361,6 @@ const adminAssignSubscription = async (req, res) => {
             }
             const plan = await prisma.subscriptionPlan.findUnique({ where: { id: planId } });
             if (!plan) return res.status(404).json({ success: false, message: 'Plan not found' });
-            
-            // Calculate end date based on plan duration
-            if (plan.duration.toLowerCase() === 'yearly' || plan.duration.toLowerCase() === 'annual') {
-                endDate.setFullYear(endDate.getFullYear() + 1);
-            } else if (plan.duration.toLowerCase() === 'lifetime') {
-                endDate.setFullYear(endDate.getFullYear() + 100);
-            } else {
-                endDate.setMonth(endDate.getMonth() + 1);
-            }
         }
 
         // Cancel existing active subscriptions

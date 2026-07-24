@@ -102,8 +102,8 @@ function propertyWhereForCatalogLocation(loc, { activeOnly = true, cityIds = nul
     return where;
 }
 
-// Pagination helper
-const getPagination = (page = 1, limit = 10) => {
+// Pagination helper. Pass maxLimit for admin bulk lists (SEO / owners).
+const getPagination = (page = 1, limit = 10, { maxLimit = 100 } = {}) => {
     let parsedPage = 1;
     if (typeof page === 'string' || typeof page === 'number') {
         parsedPage = parseInt(page);
@@ -118,7 +118,8 @@ const getPagination = (page = 1, limit = 10) => {
     } else if (Array.isArray(limit) && limit.length > 0) {
         parsedLimit = parseInt(limit[0]);
     }
-    const limitNum = isNaN(parsedLimit) ? 10 : Math.min(100, Math.max(1, parsedLimit));
+    const cap = Number.isFinite(maxLimit) && maxLimit > 0 ? maxLimit : 100;
+    const limitNum = isNaN(parsedLimit) ? 10 : Math.min(cap, Math.max(1, parsedLimit));
 
     const skip = (pageNum - 1) * limitNum;
     return { skip, take: limitNum, page: pageNum, limit: limitNum };
