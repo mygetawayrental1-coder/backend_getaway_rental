@@ -4,50 +4,25 @@ const { getPagination, formatPaginatedResponse, parseJsonField } = require('../u
 const { verifyCaptcha } = require('./captcha.controller');
 const { createTypedNotification, NOTIFICATION_TYPES } = require('../services/notification.service');
 const { sendPaymentPendingEmail } = require('../services/email.service');
+const icalService = require('../services/ical.service');
+const {
+    utcStartOfDay,
+    calculateNights,
+    calculateTotalAmount,
+    validateDateRange,
+    findStayConflicts,
+    hasConflicts,
+    conflictMessage,
+    BLOCKING_BOOKING_STATUSES,
+} = require('../utils/stayAvailability');
 
-const BLOCKING_STATUSES = ['CONFIRMED', 'ONGOING'];
-
-function startOfDay(d) {
-    const x = new Date(d);
-    x.setHours(0, 0, 0, 0);
-    return x;
-}
+const BLOCKING_STATUSES = BLOCKING_BOOKING_STATUSES;
 
 function parseDates(checkin, checkout) {
-    const checkinDate = startOfDay(checkin);
-    const checkoutDate = startOfDay(checkout);
-    return { checkinDate, checkoutDate };
-}
-
-function validateDateRange(checkinDate, checkoutDate) {
-    if (checkinDate >= checkoutDate) {
-        return 'Check-out date must be after check-in date.';
-    }
-    const today = startOfDay(new Date());
-    if (checkinDate < today) {
-        return 'Check-in date cannot be in the past.';
-    }
-    return null;
-}
-
-function calculateNights(checkinDate, checkoutDate) {
-    return Math.ceil((checkoutDate - checkinDate) / (1000 * 60 * 60 * 24));
-}
-
-/** Sum nightly + weekend rates for each night (check-in day through night before checkout). */
-function calculateTotalAmount(checkinDate, checkoutDate, nightlyRate, weekendRate) {
-    let total = 0;
-    const cur = new Date(checkinDate);
-    const end = new Date(checkoutDate);
-    while (cur < end) {
-        const day = cur.getDay();
-        const isWeekend = day === 0 || day === 6;
-        const rate =
-            isWeekend && weekendRate != null && weekendRate > 0 ? weekendRate : nightlyRate;
-        total += rate;
-        cur.setDate(cur.getDate() + 1);
-    }
-    return total;
+    return {
+        checkinDate: utcStartOfDay(checkin),
+        checkoutDate: utcStartOfDay(checkout),
+    };
 }
 
 function bookingOverlapFilter(propertyId, checkinDate, checkoutDate, statuses = BLOCKING_STATUSES) {
@@ -212,34 +187,8 @@ const checkAvailability = async (req, res) => {
             return res.status(404).json({ success: false, message: 'Property not found.' });
         }
 
-        const [blockedRows, conflicts] = await Promise.all([
-            prisma.propertyAvailability.findMany({
-                where: {
-                    propertyId: property.id,
-                    isAvailable: false,
-                    date: { gte: checkinDate, lt: checkoutDate },
-                },
-                orderBy: { date: 'asc' },
-            }),
-            prisma.booking.findMany({
-                where: bookingOverlapFilter(property.id, checkinDate, checkoutDate),
-                select: {
-                    id: true,
-                    bookingId: true,
-                    checkin: true,
-                    checkout: true,
-                    status: true,
-                    guestName: true,
-                },
-            }),
-        ]);
-
-        const blockedDates = blockedRows.map((r) => ({
-            date: r.date,
-            note: r.note,
-        }));
-
-        const available = blockedDates.length === 0 && conflicts.length === 0;
+        const stay = await findStayConflicts(property.id, checkinDate, checkoutDate);
+        const available = !hasConflicts(stay);
         const nights = calculateNights(checkinDate, checkoutDate);
         const nightlyRate = property.nightlyRate || property.minRate || 0;
         const weekendRate = property.weekendRate || null;
@@ -255,9 +204,11 @@ const checkAvailability = async (req, res) => {
             available,
             message: available
                 ? 'Property is available for booking.'
-                : 'Property is not available for the selected dates.',
-            blockedDates,
-            conflicts,
+                : conflictMessage(stay),
+            blockedDates: stay.blockedDates,
+            conflicts: stay.bookings,
+            icalConflicts: stay.icalEvents,
+            acceptedRequestConflicts: stay.acceptedRequests,
             data: {
                 propertyId: property.id,
                 propertyName: property.propertyName,
@@ -315,18 +266,10 @@ const createBooking = async (req, res) => {
             return res.status(404).json({ success: false, message: 'Property not found.' });
         }
 
-        const blocked = await prisma.propertyAvailability.findFirst({
-            where: {
-                propertyId: property.id,
-                isAvailable: false,
-                date: { gte: checkinDate, lt: checkoutDate },
-            },
-        });
-
-        if (blocked) {
-            return res.status(409).json({
+        if (property.status !== 'Active') {
+            return res.status(400).json({
                 success: false,
-                message: 'Selected dates include blocked nights.',
+                message: 'This listing is not available for booking.',
             });
         }
 
@@ -345,12 +288,15 @@ const createBooking = async (req, res) => {
         let booking;
         try {
             booking = await prisma.$transaction(async (tx) => {
-                const conflict = await tx.booking.findFirst({
-                    where: bookingOverlapFilter(property.id, checkinDate, checkoutDate),
-                });
-                if (conflict) return null;
+                const stay = await findStayConflicts(
+                    property.id,
+                    checkinDate,
+                    checkoutDate,
+                    { tx },
+                );
+                if (hasConflicts(stay)) return { conflict: stay };
 
-                return tx.booking.create({
+                const created = await tx.booking.create({
                     data: {
                         propertyId: property.id,
                         guestName,
@@ -378,6 +324,7 @@ const createBooking = async (req, res) => {
                         },
                     },
                 });
+                return { created };
             }, {
                 isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
                 maxWait: 5000,
@@ -393,6 +340,14 @@ const createBooking = async (req, res) => {
             throw error;
         }
 
+        if (booking?.conflict) {
+            return res.status(409).json({
+                success: false,
+                message: conflictMessage(booking.conflict),
+                conflicts: booking.conflict,
+            });
+        }
+        booking = booking?.created;
         if (!booking) {
             return res.status(409).json({
                 success: false,
@@ -640,22 +595,69 @@ const confirmBooking = async (req, res) => {
             });
         }
 
-        const updated = await prisma.booking.update({
-            where: { id: booking.id },
-            data: { status: 'CONFIRMED', confirmedAt: new Date() },
-            include: { property: true, payments: true },
-        });
+        let updated;
+        try {
+            updated = await prisma.$transaction(async (tx) => {
+                const stay = await findStayConflicts(
+                    booking.propertyId,
+                    booking.checkin,
+                    booking.checkout,
+                    { excludeBookingId: booking.id, tx },
+                );
+                if (hasConflicts(stay)) {
+                    return { conflict: stay };
+                }
+
+                const row = await tx.booking.update({
+                    where: { id: booking.id },
+                    data: { status: 'CONFIRMED', confirmedAt: new Date() },
+                    include: { property: true, payments: true },
+                });
+                return { row };
+            }, {
+                isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+                maxWait: 5000,
+                timeout: 10000,
+            });
+        } catch (error) {
+            if (error.code === 'P2034') {
+                return res.status(409).json({
+                    success: false,
+                    message: 'Could not confirm booking due to a conflict. Please try again.',
+                });
+            }
+            throw error;
+        }
+
+        if (updated?.conflict) {
+            return res.status(409).json({
+                success: false,
+                message: conflictMessage(updated.conflict),
+                conflicts: updated.conflict,
+            });
+        }
+        updated = updated?.row;
 
         try {
             await notifyGuest(updated, updated.property, NOTIFICATION_TYPES.BOOKING_CONFIRMED);
-            
-            // Also send Payment Pending email
+
             const owner = await prisma.user.findUnique({ where: { id: updated.property.ownerId } });
             if (updated.guestEmail && owner) {
                 await sendPaymentPendingEmail(updated.guestEmail, updated, owner);
             }
         } catch (notifyErr) {
             console.error('Booking confirmed notification error:', notifyErr);
+        }
+
+        try {
+            await icalService.createEventForInternalBooking({
+                id: updated.id,
+                propertyId: updated.propertyId,
+                checkin: updated.checkin,
+                checkout: updated.checkout,
+            });
+        } catch (icalErr) {
+            console.error('Failed to sync confirmed booking to iCal:', icalErr.message);
         }
 
         res.json({

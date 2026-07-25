@@ -26,7 +26,7 @@ const createInquiry = async (req, res) => {
             captchaCode
         } = req.body;
 
-        if (!verifyCaptcha(captchaId, captchaCode)) {
+        if (!(await verifyCaptcha(captchaId, captchaCode))) {
             console.warn(`[Inquiry] Captcha verification failed for ID: ${captchaId}`);
             return res.status(400).json({
                 success: false,
@@ -106,14 +106,7 @@ const createInquiry = async (req, res) => {
             console.error('Failed to send guest confirmation email:', emailError);
         }
 
-        // Create internal iCal event
-        try {
-            if (inquiry.checkin && inquiry.checkout) {
-                await icalService.createEventForInternalBooking(inquiry);
-            }
-        } catch (icalError) {
-            console.error('Failed to create internal iCal event:', icalError);
-        }
+        // Do not block calendar on inquiry submit — only after owner accepts.
 
         res.status(201).json({
             success: true,
@@ -309,6 +302,14 @@ const acceptInquiry = async (req, res) => {
             where: { id: inquiry.id },
             data: { status: 'ACCEPTED' },
         });
+
+        try {
+            if (updated.checkin && updated.checkout && updated.propertyId) {
+                await icalService.createEventForInternalBooking(updated);
+            }
+        } catch (icalError) {
+            console.error('Failed to create iCal event for accepted inquiry:', icalError);
+        }
 
         // Send acceptance notification to guest
         try {

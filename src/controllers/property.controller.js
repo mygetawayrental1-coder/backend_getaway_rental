@@ -539,9 +539,13 @@ const getAllProperties = async (req, res) => {
             ];
         }
 
-        // Owners only see their own listings; admins see all (admin portal / moderation).
-        if (req.user && req.user.role !== 'ADMIN') {
+        // Owners see their own listings; admins see all; guests/USER see public Active catalog.
+        if (req.user?.role === 'OWNER') {
             where.ownerId = req.user.id;
+        } else if (req.user?.role === 'ADMIN') {
+            // no owner filter
+        } else {
+            if (!status) where.status = 'Active';
         }
 
         const [properties, total] = await Promise.all([

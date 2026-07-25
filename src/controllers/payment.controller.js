@@ -16,7 +16,8 @@ const createOrder = async (req, res) => {
         const { amount, currency = 'USD', type, subscriptionId } = req.body;
         const userId = req.user.id;
 
-        if (!amount || amount <= 0) {
+        let chargeAmount = parseFloat(amount);
+        if (!Number.isFinite(chargeAmount) || chargeAmount <= 0) {
             return res.status(400).json({
                 success: false,
                 message: 'Valid amount is required.',
@@ -26,6 +27,10 @@ const createOrder = async (req, res) => {
         if (subscriptionId) {
             const owned = await prisma.userSubscription.findFirst({
                 where: { id: subscriptionId, userId },
+                include: {
+                    plan: true,
+                    coupon: true,
+                },
             });
             if (!owned) {
                 return res.status(403).json({
@@ -33,6 +38,28 @@ const createOrder = async (req, res) => {
                     message: 'Invalid subscription reference.',
                 });
             }
+
+            // Server-authoritative price from plan (+ coupon), not client amount.
+            let expected =
+                owned.plan.specialPrice != null && owned.plan.specialPrice > 0
+                    ? owned.plan.specialPrice
+                    : owned.plan.price;
+            if (owned.coupon && owned.coupon.isActive) {
+                if (owned.coupon.discountType === 'PERCENT') {
+                    expected = expected * (1 - owned.coupon.discountValue / 100);
+                } else if (owned.coupon.discountType === 'FIXED') {
+                    expected = Math.max(0, expected - owned.coupon.discountValue);
+                }
+            }
+            expected = Math.round(expected * 100) / 100;
+            if (Math.abs(chargeAmount - expected) > 0.01) {
+                return res.status(400).json({
+                    success: false,
+                    message: `Payment amount must be ${expected.toFixed(2)} for this plan.`,
+                    expectedAmount: expected,
+                });
+            }
+            chargeAmount = expected;
         }
 
         const ordersController = new OrdersController(paypalClient);
@@ -45,7 +72,7 @@ const createOrder = async (req, res) => {
                     {
                         amount: {
                             currencyCode: currency,
-                            value: amount.toString(),
+                            value: chargeAmount.toFixed(2),
                         },
                         description: type === 'subscription'
                             ? 'MyGetawayRental Subscription'
@@ -62,7 +89,7 @@ const createOrder = async (req, res) => {
         const payment = await prisma.payment.create({
             data: {
                 paypalOrderId: order.id,
-                amount: parseFloat(amount),
+                amount: chargeAmount,
                 currency,
                 type: type || 'subscription',
                 userId,
@@ -74,7 +101,7 @@ const createOrder = async (req, res) => {
             success: true,
             data: {
                 orderId: order.id,
-                amount,
+                amount: chargeAmount,
                 currency,
                 paymentId: payment.id,
                 approvalUrl: order.links?.find(link => link.rel === 'approve')?.href,

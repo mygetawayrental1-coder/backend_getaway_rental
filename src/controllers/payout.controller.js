@@ -122,10 +122,18 @@ const logPayment = async (req, res) => {
             return res.status(404).json({ success: false, message: 'Booking not found.' });
         }
 
+        const parsedAmount = parseFloat(amount);
+        if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'A valid payment amount greater than 0 is required.',
+            });
+        }
+
         const payment = await prisma.bookingPayment.create({
             data: {
                 bookingId,
-                amount: parseFloat(amount),
+                amount: parsedAmount,
                 status: 'PAID',
                 paymentMethod: paymentMethod || 'Offline',
                 paidAt: paidAt ? new Date(paidAt) : new Date()

@@ -1,4 +1,3 @@
-const bcrypt = require('bcryptjs');
 const prisma = require('../config/database');
 const { getPagination, formatPaginatedResponse } = require('../utils/helpers');
 const { reconcileAllNonAdminRoles } = require('../services/subscriptionAccess.service');
@@ -231,9 +230,9 @@ const updateUser = async (req, res) => {
             }
         }
 
-        // Update password if provided
+        // Password is managed by Clerk — ignore if clients still send it.
         if (password) {
-            updateData.password = await bcrypt.hash(password, 12);
+            console.warn('updateUser ignored password field (Clerk auth).');
         }
 
         const user = await prisma.user.update({

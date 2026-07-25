@@ -30,13 +30,18 @@ class IcalService {
 
                 const uid = event.uid || crypto.randomUUID();
 
-                // Duplicate check
+                // Duplicate check — same UID may exist on another property
                 const existing = await prisma.icalEvent.findUnique({
-                    where: { uid: uid }
+                    where: {
+                        propertyId_uid: {
+                            propertyId,
+                            uid,
+                        },
+                    },
                 });
 
                 if (existing) {
-                    continue; // Skip already imported
+                    continue; // Skip already imported for this property
                 }
 
                 // Parse dates. node-ical creates native Date objects for start/end

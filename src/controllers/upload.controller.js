@@ -1,5 +1,7 @@
 const path = require('path');
+const prisma = require('../config/database');
 const { deleteLocalFile, getFileUrl, uploadDir } = require('../config/storage');
+const { parseJsonField } = require('../utils/helpers');
 
 // Upload single file
 const uploadFile = async (req, res) => {
@@ -69,6 +71,40 @@ const uploadMultipleFiles = async (req, res) => {
     }
 };
 
+function pathMatchesKey(stored, decodedKey) {
+    if (!stored || !decodedKey) return false;
+    const s = String(stored);
+    const k = decodedKey.replace(/^\/+/, '');
+    return (
+        s.includes(decodedKey) ||
+        s.includes(k) ||
+        s.endsWith(path.basename(decodedKey)) ||
+        s.includes(`/uploads/${k}`) ||
+        s.includes(`uploads/${k}`)
+    );
+}
+
+async function userOwnsUpload(user, decodedKey) {
+    if (!user) return false;
+    if (user.role === 'ADMIN') return true;
+
+    if (pathMatchesKey(user.profilePic, decodedKey)) return true;
+
+    const properties = await prisma.property.findMany({
+        where: { ownerId: user.id },
+        select: { images: true, videoUrl: true },
+    });
+
+    for (const p of properties) {
+        if (pathMatchesKey(p.videoUrl, decodedKey)) return true;
+        const imgs = parseJsonField(p.images);
+        if (Array.isArray(imgs) && imgs.some((img) => pathMatchesKey(img, decodedKey))) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // Delete file
 const deleteFile = async (req, res) => {
     try {
@@ -81,8 +117,16 @@ const deleteFile = async (req, res) => {
             });
         }
 
-        // Decode the key (it might be URL encoded)
         const decodedKey = decodeURIComponent(key);
+
+        const allowed = await userOwnsUpload(req.user, decodedKey);
+        if (!allowed) {
+            return res.status(403).json({
+                success: false,
+                message: 'You can only delete your own uploads.',
+            });
+        }
+
         await deleteLocalFile(decodedKey);
 
         res.json({

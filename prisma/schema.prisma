@@ -840,7 +840,8 @@ model NewsletterSubscriber {
 
 model IcalEvent {
   id         String   @id @default(cuid())
-  uid        String   @unique
+  /// External calendar UID — unique per property (same Airbnb event can exist on two listings).
+  uid        String
   inquiryId  String?
   propertyId String
   property   Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
@@ -854,9 +855,20 @@ model IcalEvent {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@unique([propertyId, uid])
   @@index([propertyId])
   @@index([uid])
   @@index([dtStart, dtEnd])
+}
+
+/// Persist captchas so multi-instance / restarts still verify correctly.
+model CaptchaChallenge {
+  id        String   @id
+  code      String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([expiresAt])
 }
 
 model DynamicField {

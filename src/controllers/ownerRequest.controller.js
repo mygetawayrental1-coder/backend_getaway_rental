@@ -11,7 +11,7 @@ const createCustomPricingRequest = async (req, res) => {
         const { requestedPrice, numProperties, message, phone, captchaId, captchaCode, selectedPlanName } = req.body;
         const userId = req.user.id; // From authenticate middleware
 
-        if (!verifyCaptcha(captchaId, captchaCode)) {
+        if (!(await verifyCaptcha(captchaId, captchaCode))) {
             console.warn(`[CustomPricing] Captcha verification failed for ID: ${captchaId}`);
             return res.status(400).json({
                 success: false,
@@ -93,7 +93,7 @@ const createGuestCustomPricingRequest = async (req, res) => {
             return res.status(400).json({ success: false, message: 'Please fill in all required fields.' });
         }
 
-        if (!verifyCaptcha(captchaId, captchaCode)) {
+        if (!(await verifyCaptcha(captchaId, captchaCode))) {
             console.warn(`[GuestCustomPricing] Captcha verification failed for ID: ${captchaId}`);
             return res.status(400).json({ success: false, message: 'Invalid or expired captcha.' });
         }
@@ -157,7 +157,7 @@ const createBecomeOwnerRequest = async (req, res) => {
         const { type, message, phone, numProperties, captchaId, captchaCode } = req.body;
         const userId = req.user.id;
 
-        if (!verifyCaptcha(captchaId, captchaCode)) {
+        if (!(await verifyCaptcha(captchaId, captchaCode))) {
             return res.status(400).json({ success: false, message: 'Invalid or expired security code.' });
         }
 

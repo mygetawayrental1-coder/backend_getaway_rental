@@ -173,18 +173,10 @@ exports.searchProperties = async (req, res) => {
 
         let excludeIds = [];
         if (check_in && check_out) {
-            const start = new Date(check_in);
-            const end = new Date(check_out);
-            if (!Number.isNaN(start.getTime()) && !Number.isNaN(end.getTime()) && start < end) {
-                const overlapping = await prisma.booking.findMany({
-                    where: {
-                        status: 'CONFIRMED',
-                        AND: [{ checkin: { lt: end } }, { checkout: { gt: start } }],
-                    },
-                    select: { propertyId: true },
-                });
-                excludeIds = [...new Set(overlapping.map((b) => b.propertyId))];
-            }
+            const {
+                propertyIdsBlockedForRange,
+            } = require('../../utils/stayAvailability');
+            excludeIds = await propertyIdsBlockedForRange(check_in, check_out);
         }
 
         if (excludeIds.length) {
