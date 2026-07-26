@@ -102,8 +102,33 @@ const verifyCaptcha = async (captchaId, answer, consume = true) => {
     }
 };
 
+/** HTTP: POST /captcha/validate — used by Flutter; does not consume (submit endpoints verify again). */
+const validateCaptcha = async (req, res) => {
+    try {
+        const captchaId = req.body?.captchaId;
+        const answer = req.body?.answer ?? req.body?.captchaCode;
+        const valid = await verifyCaptcha(captchaId, answer, false);
+        if (!valid) {
+            return res.status(400).json({
+                success: false,
+                valid: false,
+                message: 'Invalid or expired captcha.',
+            });
+        }
+        return res.json({ success: true, valid: true });
+    } catch (error) {
+        console.error('Validate captcha error:', error);
+        return res.status(500).json({
+            success: false,
+            valid: false,
+            message: 'Failed to validate captcha.',
+        });
+    }
+};
+
 module.exports = {
     createCaptcha,
     regenerateCaptcha,
+    validateCaptcha,
     verifyCaptcha,
 };
