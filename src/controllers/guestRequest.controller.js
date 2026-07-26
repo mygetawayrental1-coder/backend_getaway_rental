@@ -122,7 +122,7 @@ const createGuestRequest = async (req, res) => {
             quoteLines.push(`Subtotal: ${formatUsd(quote.quotedSubtotal)}`);
         }
         if (formatUsd(quote.quotedServiceFee)) {
-            quoteLines.push(`Service fee: ${formatUsd(quote.quotedServiceFee)}`);
+            quoteLines.push(`Fees: ${formatUsd(quote.quotedServiceFee)}`);
         }
         if (formatUsd(quote.quotedDynamicFees) && quote.quotedDynamicFees > 0) {
             quoteLines.push(`Other fees: ${formatUsd(quote.quotedDynamicFees)}`);

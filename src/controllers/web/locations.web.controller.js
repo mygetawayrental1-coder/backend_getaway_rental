@@ -232,10 +232,26 @@ exports.createLocation = async (req, res) => {
             });
         }
 
+        const cleanSlug = String(slug).trim().toLowerCase();
+        const existing = await prisma.location.findUnique({ where: { slug: cleanSlug } });
+        if (existing) {
+            return res.status(400).json({
+                success: false,
+                message: `Location slug already exists (${existing.name} / ${existing.type} / id=${existing.id}).`,
+                existing: {
+                    id: existing.id,
+                    name: existing.name,
+                    slug: existing.slug,
+                    type: existing.type,
+                    isActive: existing.isActive,
+                },
+            });
+        }
+
         const location = await prisma.location.create({
             data: {
                 name: String(name).trim(),
-                slug: String(slug).trim().toLowerCase(),
+                slug: cleanSlug,
                 type: locType,
                 parentId: locType === 'COUNTRY' ? null : resolvedParentId,
                 parentSlug: locType === 'COUNTRY' ? null : resolvedParentSlug,
@@ -251,10 +267,21 @@ exports.createLocation = async (req, res) => {
         res.status(201).json({ success: true, location });
     } catch (error) {
         if (error.code === 'P2002') {
-            return res.status(400).json({ success: false, message: 'Location slug already exists.' });
+            const fields = Array.isArray(error.meta?.target)
+                ? error.meta.target.join(', ')
+                : String(error.meta?.target || 'unknown');
+            return res.status(400).json({
+                success: false,
+                message: `Location unique conflict on: ${fields}.`,
+            });
         }
         console.error('[web/locations] create', error);
-        res.status(500).json({ success: false, message: 'Failed to create location.' });
+        res.status(500).json({
+            success: false,
+            message: error.message
+                ? `Failed to create location: ${error.message}`
+                : 'Failed to create location.',
+        });
     }
 };
 

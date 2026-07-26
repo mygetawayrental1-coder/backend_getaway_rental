@@ -26,6 +26,7 @@ const ownerRequestRoutes = require('./routes/ownerRequest.routes');
 const icalRoutes = require('./routes/ical.routes');
 const webhookRoutes = require('./routes/webhook.routes');
 const dynamicFieldRoutes = require('./routes/dynamicField.routes');
+const bookingChargeRoutes = require('./routes/bookingCharge.routes');
 const webPropertiesRoutes = require('./routes/web/properties.routes');
 const webBlogRoutes = require('./routes/web/blog.routes');
 const webLocationsRoutes = require('./routes/web/locations.routes');
@@ -85,6 +86,8 @@ app.get('/', (req, res) => {
             coupons: '/coupons',
             reviews: '/reviews',
             ical: '/ical',
+            dynamicFields: '/dynamic-fields',
+            bookingCharges: '/booking-charges',
             web: '/api/web',
             webHosts: '/api/web/hosts',
             webLocationsProperties: '/api/web/locations/:slug/properties',
@@ -116,6 +119,7 @@ app.use('/reviews', reviewRoutes);
 app.use('/owner-requests', ownerRequestRoutes);
 app.use('/ical', icalRoutes);
 app.use('/dynamic-fields', dynamicFieldRoutes);
+app.use('/booking-charges', bookingChargeRoutes);
 
 // Web app (Next.js) — after mobile/admin routes
 app.use('/api/web/properties', webPropertiesRoutes);

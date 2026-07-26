@@ -884,3 +884,19 @@ model DynamicField {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 }
+
+/// Platform booking fees shown on guest quotes (service fee, cleaning, etc.)
+model BookingCharge {
+  id        String   @id @default(cuid())
+  name      String   @unique // machine key e.g. service_fee
+  label     String // display e.g. Service fee
+  calcType  String // "percent" | "flat"
+  value     Float // 10 = 10% OR $10 flat
+  isActive  Boolean  @default(true)
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive])
+  @@index([sortOrder])
+}
