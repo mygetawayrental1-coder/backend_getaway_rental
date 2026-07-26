@@ -36,11 +36,33 @@ const storage = multer.diskStorage({
         cb(null, destPath);
     },
     filename: function (req, file, cb) {
-        const ext = path.extname(file.originalname);
+        // JFIF is JPEG — store as .jpg so browsers/CDN serve it reliably.
+        let ext = path.extname(file.originalname).toLowerCase();
+        if (ext === '.jfif' || ext === '.jpe') ext = '.jpg';
+        if (!ext) ext = '.jpg';
         const filename = `${uuidv4()}${ext}`;
         cb(null, filename);
     },
 });
+
+const ALLOWED_IMAGE_EXTS = new Set([
+    '.jpeg',
+    '.jpg',
+    '.jfif',
+    '.jpe',
+    '.png',
+    '.gif',
+    '.webp',
+]);
+const ALLOWED_IMAGE_MIMES = new Set([
+    'image/jpeg',
+    'image/jpg',
+    'image/jfif',
+    'image/pjpeg',
+    'image/png',
+    'image/gif',
+    'image/webp',
+]);
 
 // Configure multer
 const upload = multer({
@@ -49,14 +71,18 @@ const upload = multer({
         fileSize: 10 * 1024 * 1024, // 10MB limit
     },
     fileFilter: function (req, file, cb) {
-        const allowedTypes = /jpeg|jpg|png|gif|webp/;
-        const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-        const mimetype = allowedTypes.test(file.mimetype);
+        const ext = path.extname(file.originalname || '').toLowerCase();
+        const mime = String(file.mimetype || '').toLowerCase();
+        const extOk = ALLOWED_IMAGE_EXTS.has(ext);
+        // Some browsers send JFIF as image/jpeg; others as image/jfif.
+        const mimeOk =
+            ALLOWED_IMAGE_MIMES.has(mime) ||
+            (ext === '.jfif' && (mime === 'image/jpeg' || mime === 'application/octet-stream'));
 
-        if (extname && mimetype) {
+        if (extOk && mimeOk) {
             return cb(null, true);
         }
-        cb(new Error('Only image files are allowed!'));
+        cb(new Error('Only image files are allowed (jpg, jpeg, jfif, png, gif, webp)!'));
     },
 });
 

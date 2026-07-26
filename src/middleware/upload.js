@@ -37,7 +37,10 @@ const handleUploadError = (err, req, res, next) => {
                 message: 'Too many files in one upload (max 50 per request).',
             });
         }
-        if (err.message === 'Only image files are allowed!') {
+        if (
+            err.message === 'Only image files are allowed!' ||
+            String(err.message || '').startsWith('Only image files are allowed')
+        ) {
             return res.status(400).json({
                 success: false,
                 message: err.message,
