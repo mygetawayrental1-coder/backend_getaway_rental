@@ -2,6 +2,36 @@
  * Property SEO helpers — clean slugs + bounded meta fields.
  */
 
+const DEFAULT_PATH_PREFIX = 'properties';
+const RESERVED_PATH_PREFIXES = new Set([
+    'about',
+    'api',
+    'become-a-host',
+    'blog',
+    'booking-confirmation',
+    'contact',
+    'dashboard',
+    'full-map-layout',
+    'partner-page',
+    'pricing',
+    'search-rental-full-map',
+    'sign-in',
+    'sign-up',
+    'st_location',
+    'st_rental',
+    'uploads',
+    '_next',
+]);
+
+const ALLOWED_SCHEMA_TYPES = new Set([
+    'VacationRental',
+    'LodgingBusiness',
+    'House',
+    'Apartment',
+    'Accommodation',
+    'Product',
+]);
+
 function slugify(text) {
     return String(text || '')
         .toLowerCase()
@@ -11,6 +41,12 @@ function slugify(text) {
         .replace(/-+/g, '-')
         .replace(/^-+|-+$/g, '')
         .slice(0, 80);
+}
+
+function normalizePathPrefix(raw) {
+    const cleaned = slugify(raw).slice(0, 40);
+    if (!cleaned || RESERVED_PATH_PREFIXES.has(cleaned)) return DEFAULT_PATH_PREFIX;
+    return cleaned;
 }
 
 /** @returns {{ ok: true, value: string|null } | { ok: false, message: string }} */
@@ -40,6 +76,10 @@ function sanitizePropertySeoFields(body) {
             return { data: {}, error: 'URL slug must contain letters or numbers (e.g. miami-beach-condo).' };
         }
         data.slug = slug;
+    }
+
+    if (body.seoPathPrefix !== undefined) {
+        data.seoPathPrefix = normalizePathPrefix(body.seoPathPrefix);
     }
 
     const title = normalizeSeoText(body.seoTitle, { max: 70, label: 'Meta title' });
@@ -76,6 +116,44 @@ function sanitizePropertySeoFields(body) {
         data.seoBacklinks = notes || null;
     }
 
+    if (body.seoSchemaType !== undefined) {
+        const raw = body.seoSchemaType == null ? '' : String(body.seoSchemaType).trim();
+        if (!raw) {
+            data.seoSchemaType = null;
+        } else if (!ALLOWED_SCHEMA_TYPES.has(raw)) {
+            return {
+                data: {},
+                error: `Schema type must be one of: ${[...ALLOWED_SCHEMA_TYPES].join(', ')}`,
+            };
+        } else {
+            data.seoSchemaType = raw;
+        }
+    }
+
+    const schemaDesc = normalizeSeoText(body.seoSchemaDescription, {
+        max: 5000,
+        label: 'Schema description',
+    });
+    if (!schemaDesc.ok) return { data: {}, error: schemaDesc.message };
+    if (schemaDesc.value !== undefined) data.seoSchemaDescription = schemaDesc.value;
+
+    if (body.seoSchemaExtra !== undefined) {
+        const raw = body.seoSchemaExtra == null ? '' : String(body.seoSchemaExtra).trim();
+        if (!raw) {
+            data.seoSchemaExtra = null;
+        } else {
+            try {
+                const parsed = JSON.parse(raw);
+                if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+                    return { data: {}, error: 'Schema extra JSON must be a JSON object, e.g. {"amenityFeature":[]}.' };
+                }
+                data.seoSchemaExtra = JSON.stringify(parsed);
+            } catch {
+                return { data: {}, error: 'Schema extra must be valid JSON.' };
+            }
+        }
+    }
+
     return { data };
 }
 
@@ -101,4 +179,6 @@ module.exports = {
     slugify,
     sanitizePropertySeoFields,
     ensureUniquePropertySlug,
+    normalizePathPrefix,
+    DEFAULT_PATH_PREFIX,
 };

@@ -272,6 +272,58 @@ function formatRequestDate(value) {
   }
 }
 
+/** Adults / children / pets line for guest-request emails. */
+function formatGuestPartyHtml(request) {
+  const adults = Number(request.adults);
+  const children = Number(request.children);
+  const pets = Number(request.pets);
+  const hasBreakdown =
+    Number.isFinite(adults) || Number.isFinite(children) || Number.isFinite(pets);
+
+  if (!hasBreakdown) {
+    return `<p><strong>Guests:</strong> ${request.guests || 1}</p>`;
+  }
+
+  const a = Number.isFinite(adults) ? Math.max(0, adults) : Math.max(1, Number(request.guests) || 1);
+  const c = Number.isFinite(children) ? Math.max(0, children) : 0;
+  const p = Number.isFinite(pets) ? Math.max(0, pets) : 0;
+  const totalPeople = a + c;
+
+  return `
+        <p><strong>Guests:</strong> ${totalPeople || request.guests || 1}</p>
+        <p><strong>Adults:</strong> ${a}</p>
+        <p><strong>Children:</strong> ${c}</p>
+        <p><strong>Pets:</strong> ${p}</p>`;
+}
+
+function formatGuestPartyText(request) {
+  const adults = Number(request.adults);
+  const children = Number(request.children);
+  const pets = Number(request.pets);
+  if (!Number.isFinite(adults) && !Number.isFinite(children) && !Number.isFinite(pets)) {
+    return `Guests: ${request.guests || 1}`;
+  }
+  const a = Number.isFinite(adults) ? Math.max(0, adults) : Math.max(1, Number(request.guests) || 1);
+  const c = Number.isFinite(children) ? Math.max(0, children) : 0;
+  const p = Number.isFinite(pets) ? Math.max(0, pets) : 0;
+  return `Guests: ${a + c} (Adults: ${a}, Children: ${c}, Pets: ${p})`;
+}
+
+function formatCustomFieldsHtml(request) {
+  const fields = request.customFields;
+  if (!fields || typeof fields !== 'object') return '';
+  const labels = request.customFieldLabels || {};
+  const entries = Object.entries(fields);
+  if (!entries.length) return '';
+  return entries
+    .map(([key, val]) => {
+      const label = labels[key] || key;
+      const display = typeof val === 'boolean' ? (val ? 'Yes' : 'No') : String(val);
+      return `<p><strong>${label}:</strong> ${display}</p>`;
+    })
+    .join('\n');
+}
+
 const sendGuestRequestNotification = async (ownerEmail, request) => {
   const ownerPhone = request.ownerPhone || 'Not on file';
   const guestPhone = request.phone || 'Not provided';
@@ -288,7 +340,8 @@ const sendGuestRequestNotification = async (ownerEmail, request) => {
         <p><strong>Your phone on file:</strong> ${ownerPhone}</p>
         <p><strong>Check-in:</strong> ${formatRequestDate(request.checkin)}</p>
         <p><strong>Check-out:</strong> ${formatRequestDate(request.checkout)}</p>
-        <p><strong>Guests:</strong> ${request.guests || 1}</p>
+        ${formatGuestPartyHtml(request)}
+        ${formatCustomFieldsHtml(request)}
         ${
           request.quotedTotal != null
             ? `<p><strong>Quoted total (estimate):</strong> $${Number(request.quotedTotal).toFixed(2)}</p>
@@ -305,7 +358,7 @@ const sendGuestRequestNotification = async (ownerEmail, request) => {
     to: ownerEmail,
     subject: `New rent request — ${request.propertyName}`,
     html,
-    text: `New rent request from ${request.fullName} (${guestPhone}) for ${request.propertyName}${
+    text: `New rent request from ${request.fullName} (${guestPhone}) for ${request.propertyName} | ${formatGuestPartyText(request)}${
       request.quotedTotal != null
         ? ` | Quoted total (temporary): $${Number(request.quotedTotal).toFixed(2)}`
         : ''
@@ -322,7 +375,8 @@ const sendGuestRequestConfirmationToGuest = async (guestEmail, request) => {
       <div style="background-color: #f9fafb; padding: 16px; border-radius: 8px; margin: 16px 0;">
         <p><strong>Check-in:</strong> ${formatRequestDate(request.checkin)}</p>
         <p><strong>Check-out:</strong> ${formatRequestDate(request.checkout)}</p>
-        <p><strong>Guests:</strong> ${request.guests || 1}</p>
+        ${formatGuestPartyHtml(request)}
+        ${formatCustomFieldsHtml(request)}
         ${
           request.quotedTotal != null
             ? `<p><strong>Quoted total (estimate):</strong> $${Number(request.quotedTotal).toFixed(2)}</p>
@@ -409,7 +463,7 @@ const sendGuestRequestAcceptedToGuest = async (guestEmail, request, owner = null
       <div style="background-color: #f0fdf4; padding: 16px; border-radius: 8px; margin: 16px 0;">
         <p><strong>Check-in:</strong> ${formatRequestDate(request.checkin)}</p>
         <p><strong>Check-out:</strong> ${formatRequestDate(request.checkout)}</p>
-        <p><strong>Guests:</strong> ${request.guests || 1}</p>
+        ${formatGuestPartyHtml(request)}
       </div>
       <h3 style="color: #0f172a;">How to pay</h3>
       <div style="background-color: #fff8e1; padding: 16px; border-radius: 8px; border-left: 4px solid #f59e0b; margin: 16px 0;">

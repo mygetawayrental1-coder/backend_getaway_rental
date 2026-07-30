@@ -153,12 +153,16 @@ model Property {
   icalUrls String? // JSON: { airbnb: url, vrbo: url, ... }
   customFields String? // JSON: { fieldName: value }
 
-  // SEO Fields
-  seoTitle        String?
-  seoDescription  String?
-  seoKeywords     String? // Comma-separated or JSON array
-  seoCanonicalUrl String? // Override canonical URL
-  seoBacklinks    String? @db.Text // Admin internal notes for backlinks
+  // SEO Fields (slug is defined above on Property)
+  seoPathPrefix        String? @default("properties") // public path segment e.g. properties
+  seoTitle             String?
+  seoDescription       String?
+  seoKeywords          String? // Comma-separated or JSON array
+  seoCanonicalUrl      String? // Override canonical URL
+  seoBacklinks         String? @db.Text // Admin internal notes for backlinks
+  seoSchemaType        String? // schema.org @type override e.g. VacationRental
+  seoSchemaDescription String? @db.Text // JSON-LD description override
+  seoSchemaExtra       String? @db.Text // JSON object merged into JSON-LD
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -227,7 +231,13 @@ model GuestRequest {
 
   checkin  DateTime?
   checkout DateTime?
-  guests   Int       @default(1)
+  guests   Int       @default(1) // adults + children (capacity)
+  adults   Int       @default(1)
+  children Int       @default(0)
+  pets     Int       @default(0)
+
+  /// Answers to admin-defined CheckoutField customs: { fieldName: value }
+  customFields String?
 
   status String @default("NEW") // NEW | VIEWED | CONTACTED | ACCEPTED | REJECTED | CLOSED
 
@@ -302,7 +312,10 @@ model Booking {
   // Dates & capacity
   checkin  DateTime
   checkout DateTime
-  guests   Int      @default(1)
+  guests   Int      @default(1) // adults + children
+  adults   Int      @default(1)
+  children Int      @default(0)
+  pets     Int      @default(0)
   nights   Int
 
   // Pricing snapshot at time of booking
@@ -921,25 +934,53 @@ model BookingCharge {
   @@index([sortOrder])
 }
 
+/// Guest checkout / rent-request form fields (admin Checkout Form builder).
+/// Meta rows (isActive=false): std_checkout_hidden, std_checkout_required, std_checkout_labels
+model CheckoutField {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  label       String
+  type        String // text | number | boolean | select | textarea
+  options     String? // JSON array for select, or meta JSON for std_* rows
+  required    Boolean  @default(false)
+  placeholder String?
+  section     String   @default("extras") // contact | party | extras
+  isActive    Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([isActive])
+  @@index([section])
+  @@index([sortOrder])
+}
+
 /// Marketing page hero SEO (H1, description, image, meta) — edited from admin
 model PageHeroConfig {
-  id              String   @id @default(cuid())
-  pageKey         String   @unique
-  label           String
-  path            String
-  title           String
-  description     String   @db.Text
-  imageUrl        String
-  imageAlt        String?
-  breadcrumbLabel String?
-  eyebrow         String?
-  size            String   @default("md")
-  metaTitle       String?
-  metaDescription String?  @db.Text
-  useCmsValues    Boolean  @default(true)
-  sortOrder       Int      @default(0)
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  id                String   @id @default(cuid())
+  pageKey           String   @unique
+  label             String
+  path              String
+  title             String
+  description       String   @db.Text
+  imageUrl          String
+  imageAlt          String?
+  breadcrumbLabel   String?
+  eyebrow           String?
+  size              String   @default("md")
+  metaTitle         String?
+  metaDescription   String?  @db.Text
+  metaKeywords      String?
+  canonicalUrl      String?
+  robotsIndex       Boolean  @default(true)
+  robotsFollow      Boolean  @default(true)
+  schemaType        String? // WebPage | AboutPage | ContactPage | CollectionPage | Blog | FAQPage
+  schemaDescription String?  @db.Text
+  schemaExtra       String?  @db.Text // JSON object merged into page JSON-LD
+  useCmsValues      Boolean  @default(true)
+  sortOrder         Int      @default(0)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
   @@index([useCmsValues])
   @@index([sortOrder])

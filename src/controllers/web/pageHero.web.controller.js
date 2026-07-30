@@ -1,6 +1,27 @@
 const prisma = require('../../config/database');
 
 const ALLOWED_SIZES = new Set(['sm', 'md', 'lg']);
+const ALLOWED_SCHEMA_TYPES = new Set([
+    'WebPage',
+    'AboutPage',
+    'ContactPage',
+    'CollectionPage',
+    'Blog',
+    'FAQPage',
+    'ProfilePage',
+    'SearchResultsPage',
+]);
+
+const DEFAULT_SCHEMA_BY_KEY = {
+    home: 'WebPage',
+    about: 'AboutPage',
+    contact: 'ContactPage',
+    blog: 'Blog',
+    pricing: 'WebPage',
+    partner: 'ProfilePage',
+    listings: 'CollectionPage',
+    search: 'SearchResultsPage',
+};
 
 /** Seed defaults — match current website hardcoded heroes */
 const DEFAULT_HEROES = [
@@ -20,6 +41,8 @@ const DEFAULT_HEROES = [
         metaTitle: 'Vacation Rentals Across the US',
         metaDescription:
             'Find vacation rentals, villas, and unique stays. Book direct with trusted owners on MyGetawayRental.',
+        metaKeywords: 'vacation rental, book direct, short term rental, MyGetawayRental',
+        schemaType: 'WebPage',
         sortOrder: 0,
     },
     {
@@ -38,6 +61,8 @@ const DEFAULT_HEROES = [
         metaTitle: 'About us',
         metaDescription:
             'Learn how MyGetawayRental connects travelers with memorable vacation stays and helps property owners list with confidence.',
+        metaKeywords: 'about MyGetawayRental, vacation rental platform, property owners',
+        schemaType: 'AboutPage',
         sortOrder: 1,
     },
     {
@@ -55,6 +80,8 @@ const DEFAULT_HEROES = [
         size: 'md',
         metaTitle: 'Contact us',
         metaDescription: 'Get in touch with the MyGetawayRental team.',
+        metaKeywords: 'contact MyGetawayRental, support, owner help',
+        schemaType: 'ContactPage',
         sortOrder: 2,
     },
     {
@@ -73,6 +100,8 @@ const DEFAULT_HEROES = [
         metaTitle: 'Vacation Rental Blog & Travel Guides',
         metaDescription:
             'Travel tips, destination guides, and vacation rental advice from MyGetawayRental — plan better trips and book with confidence.',
+        metaKeywords: 'vacation rental blog, travel guides, booking tips',
+        schemaType: 'Blog',
         sortOrder: 3,
     },
     {
@@ -91,6 +120,8 @@ const DEFAULT_HEROES = [
         metaTitle: 'Owner plans',
         metaDescription:
             'Choose a subscription plan to list and manage your vacation rentals on MyGetawayRental.',
+        metaKeywords: 'owner plans, list vacation rental, subscription pricing',
+        schemaType: 'WebPage',
         sortOrder: 4,
     },
     {
@@ -109,6 +140,8 @@ const DEFAULT_HEROES = [
         metaTitle: 'Owner profile',
         metaDescription:
             'View vacation rental listings and details from this MyGetawayRental property owner.',
+        metaKeywords: 'host profile, vacation rental owner, property host',
+        schemaType: 'ProfilePage',
         sortOrder: 5,
     },
     {
@@ -127,6 +160,8 @@ const DEFAULT_HEROES = [
         metaTitle: 'Full Map Layout',
         metaDescription:
             'Browse vacation rentals on an interactive map across the United States.',
+        metaKeywords: 'vacation rentals map, browse listings, interactive map',
+        schemaType: 'CollectionPage',
         sortOrder: 6,
     },
     {
@@ -145,6 +180,8 @@ const DEFAULT_HEROES = [
         metaTitle: 'Search rentals',
         metaDescription:
             'Browse vacation rentals across the United States on the map or in the grid.',
+        metaKeywords: 'search vacation rentals, filter stays, map search',
+        schemaType: 'SearchResultsPage',
         sortOrder: 7,
     },
 ];
@@ -162,11 +199,19 @@ async function ensureDefaults() {
                     await prisma.pageHeroConfig.create({
                         data: { ...row, useCmsValues: true },
                     });
-                } else if (!existing.imageAlt && row.imageAlt) {
-                    await prisma.pageHeroConfig.update({
-                        where: { pageKey: row.pageKey },
-                        data: { imageAlt: row.imageAlt },
-                    });
+                } else {
+                    const patch = {};
+                    if (!existing.imageAlt && row.imageAlt) patch.imageAlt = row.imageAlt;
+                    if (!existing.schemaType) {
+                        patch.schemaType = row.schemaType || DEFAULT_SCHEMA_BY_KEY[row.pageKey] || 'WebPage';
+                    }
+                    if (!existing.metaKeywords && row.metaKeywords) patch.metaKeywords = row.metaKeywords;
+                    if (Object.keys(patch).length) {
+                        await prisma.pageHeroConfig.update({
+                            where: { pageKey: row.pageKey },
+                            data: patch,
+                        });
+                    }
                 }
             }
         })().catch((err) => {
@@ -237,6 +282,13 @@ exports.updateAdmin = async (req, res) => {
             size,
             metaTitle,
             metaDescription,
+            metaKeywords,
+            canonicalUrl,
+            robotsIndex,
+            robotsFollow,
+            schemaType,
+            schemaDescription,
+            schemaExtra,
             useCmsValues,
         } = req.body;
 
@@ -301,6 +353,83 @@ exports.updateAdmin = async (req, res) => {
                 metaDescription === null || metaDescription === ''
                     ? null
                     : String(metaDescription).trim();
+        }
+
+        if (metaKeywords !== undefined) {
+            data.metaKeywords =
+                metaKeywords === null || metaKeywords === ''
+                    ? null
+                    : String(metaKeywords).trim().slice(0, 400);
+        }
+
+        if (canonicalUrl !== undefined) {
+            const raw = canonicalUrl === null || canonicalUrl === '' ? '' : String(canonicalUrl).trim();
+            if (!raw) {
+                data.canonicalUrl = null;
+            } else {
+                try {
+                    const u = new URL(raw);
+                    if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+                        return res.status(400).json({
+                            success: false,
+                            message: 'Canonical URL must start with http:// or https://',
+                        });
+                    }
+                    data.canonicalUrl = u.toString();
+                } catch {
+                    return res.status(400).json({
+                        success: false,
+                        message: 'Canonical URL is not a valid URL.',
+                    });
+                }
+            }
+        }
+
+        if (robotsIndex !== undefined) data.robotsIndex = Boolean(robotsIndex);
+        if (robotsFollow !== undefined) data.robotsFollow = Boolean(robotsFollow);
+
+        if (schemaType !== undefined) {
+            const raw = schemaType === null || schemaType === '' ? '' : String(schemaType).trim();
+            if (!raw) {
+                data.schemaType = null;
+            } else if (!ALLOWED_SCHEMA_TYPES.has(raw)) {
+                return res.status(400).json({
+                    success: false,
+                    message: `Schema type must be one of: ${[...ALLOWED_SCHEMA_TYPES].join(', ')}`,
+                });
+            } else {
+                data.schemaType = raw;
+            }
+        }
+
+        if (schemaDescription !== undefined) {
+            data.schemaDescription =
+                schemaDescription === null || schemaDescription === ''
+                    ? null
+                    : String(schemaDescription).trim().slice(0, 5000);
+        }
+
+        if (schemaExtra !== undefined) {
+            const raw = schemaExtra === null || schemaExtra === '' ? '' : String(schemaExtra).trim();
+            if (!raw) {
+                data.schemaExtra = null;
+            } else {
+                try {
+                    const parsed = JSON.parse(raw);
+                    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+                        return res.status(400).json({
+                            success: false,
+                            message: 'Schema extra JSON must be a JSON object.',
+                        });
+                    }
+                    data.schemaExtra = JSON.stringify(parsed);
+                } catch {
+                    return res.status(400).json({
+                        success: false,
+                        message: 'Schema extra must be valid JSON.',
+                    });
+                }
+            }
         }
 
         if (useCmsValues !== undefined) {

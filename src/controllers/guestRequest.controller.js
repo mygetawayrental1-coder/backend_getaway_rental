@@ -21,6 +21,7 @@ const {
     conflictMessage,
 } = require('../utils/stayAvailability');
 const icalService = require('../services/ical.service');
+const { getCheckoutConfig } = require('./checkoutField.controller');
 
 const PENDING_REQUEST_STATUSES = ['NEW', 'VIEWED', 'CONTACTED'];
 
@@ -37,7 +38,77 @@ function formatUsd(amount) {
     return `$${n.toFixed(2)}`;
 }
 
-function emailPayload(request, property, quote = {}) {
+function parseNonNegInt(value, fallback = 0) {
+    const n = parseInt(value, 10);
+    if (!Number.isFinite(n) || n < 0) return fallback;
+    return n;
+}
+
+/** Normalize adults / children / pets; guests = adults + children. */
+function normalizeGuestParty(body = {}) {
+    let adults = body.adults != null ? parseNonNegInt(body.adults, 1) : null;
+    let children = body.children != null ? parseNonNegInt(body.children, 0) : null;
+    let pets = body.pets != null ? parseNonNegInt(body.pets, 0) : null;
+    const guestsFallback = Math.max(1, parseNonNegInt(body.guests, 1));
+
+    if (adults == null && children == null) {
+        adults = guestsFallback;
+        children = 0;
+    } else {
+        adults = adults == null ? Math.max(1, guestsFallback) : adults;
+        children = children == null ? 0 : children;
+    }
+    if (adults < 1 && children < 1) adults = 1;
+    pets = pets == null ? 0 : pets;
+
+    return {
+        adults,
+        children,
+        pets,
+        guests: Math.max(1, adults + children),
+    };
+}
+
+function parseCustomFieldsPayload(raw, activeDefs) {
+    let incoming = raw;
+    if (typeof raw === 'string') {
+        try {
+            incoming = JSON.parse(raw);
+        } catch {
+            incoming = {};
+        }
+    }
+    if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) {
+        incoming = {};
+    }
+
+    const cleaned = {};
+    const labels = {};
+    for (const def of activeDefs || []) {
+        const key = def.name;
+        const val = incoming[key];
+        if (val === undefined || val === null) continue;
+        if (typeof val === 'boolean') {
+            cleaned[key] = val;
+        } else {
+            const s = String(val).trim();
+            if (s === '') continue;
+            cleaned[key] = s;
+        }
+        labels[key] = def.label || key;
+    }
+    return { cleaned, labels };
+}
+
+function emailPayload(request, property, quote = {}, customFieldLabels = {}) {
+    let customFields = request.customFields;
+    if (typeof customFields === 'string') {
+        try {
+            customFields = JSON.parse(customFields);
+        } catch {
+            customFields = {};
+        }
+    }
     return {
         propertyName: property.propertyName,
         fullName: request.fullName,
@@ -46,7 +117,12 @@ function emailPayload(request, property, quote = {}) {
         checkin: request.checkin,
         checkout: request.checkout,
         guests: request.guests,
+        adults: request.adults,
+        children: request.children,
+        pets: request.pets,
         message: request.message,
+        customFields: customFields && typeof customFields === 'object' ? customFields : {},
+        customFieldLabels,
         nights: quote.nights ?? null,
         quotedNightlyRate: quote.quotedNightlyRate ?? null,
         quotedSubtotal: quote.quotedSubtotal ?? null,
@@ -72,15 +148,21 @@ const createGuestRequest = async (req, res) => {
             checkin,
             checkout,
             guests,
+            adults,
+            children,
+            pets,
             nights,
             quotedNightlyRate,
             quotedSubtotal,
             quotedServiceFee,
             quotedDynamicFees,
             quotedTotal,
+            customFields: customFieldsRaw,
             captchaId,
             captchaCode,
         } = req.body;
+
+        const party = normalizeGuestParty({ guests, adults, children, pets });
 
         if (!(await verifyCaptcha(captchaId, captchaCode))) {
             return res.status(400).json({ success: false, message: 'Invalid or expired security code.' });
@@ -94,6 +176,49 @@ const createGuestRequest = async (req, res) => {
                 success: false,
                 message: 'Property, full name, and email are required.',
             });
+        }
+
+        let checkoutConfig;
+        try {
+            checkoutConfig = await getCheckoutConfig();
+        } catch {
+            checkoutConfig = {
+                fields: [],
+                hiddenStandards: [],
+                requiredStandards: [],
+                standardLabels: {},
+            };
+        }
+
+        const hidden = new Set(checkoutConfig.hiddenStandards || []);
+        const requiredStd = new Set(checkoutConfig.requiredStandards || []);
+        // Safety floor: name + email always required (already checked)
+        if (!hidden.has('phone') && requiredStd.has('phone') && !String(phone || '').trim()) {
+            return res.status(400).json({
+                success: false,
+                message: 'Phone number is required.',
+            });
+        }
+        if (!hidden.has('message') && requiredStd.has('message') && !String(message || '').trim()) {
+            return res.status(400).json({
+                success: false,
+                message: 'Message is required.',
+            });
+        }
+
+        const { cleaned: customFieldsClean, labels: customFieldLabels } = parseCustomFieldsPayload(
+            customFieldsRaw,
+            checkoutConfig.fields || [],
+        );
+        for (const def of checkoutConfig.fields || []) {
+            if (!def.required) continue;
+            const val = customFieldsClean[def.name];
+            if (val === undefined || val === null || String(val).trim() === '') {
+                return res.status(400).json({
+                    success: false,
+                    message: `${def.label || def.name} is required.`,
+                });
+            }
         }
 
         const quote = {
@@ -114,6 +239,13 @@ const createGuestRequest = async (req, res) => {
         };
 
         const quoteLines = [];
+        quoteLines.push(
+            `Guests: ${party.guests} (Adults: ${party.adults}, Children: ${party.children}, Pets: ${party.pets})`,
+        );
+        for (const [key, val] of Object.entries(customFieldsClean)) {
+            const label = customFieldLabels[key] || key;
+            quoteLines.push(`${label}: ${typeof val === 'boolean' ? (val ? 'Yes' : 'No') : val}`);
+        }
         if (quote.nights != null) quoteLines.push(`Nights: ${quote.nights}`);
         if (formatUsd(quote.quotedNightlyRate)) {
             quoteLines.push(`Nightly rate: ${formatUsd(quote.quotedNightlyRate)}`);
@@ -185,6 +317,14 @@ const createGuestRequest = async (req, res) => {
             }
         }
 
+        const maxGuests = Number(property.guests) || 0;
+        if (maxGuests > 0 && party.guests > maxGuests) {
+            return res.status(400).json({
+                success: false,
+                message: `This property allows up to ${maxGuests} guests (adults + children).`,
+            });
+        }
+
         const guestRequest = await prisma.guestRequest.create({
             data: {
                 propertyId: property.id,
@@ -194,7 +334,14 @@ const createGuestRequest = async (req, res) => {
                 message: messageWithQuote,
                 checkin: checkin ? new Date(checkin) : null,
                 checkout: checkout ? new Date(checkout) : null,
-                guests: guests || 1,
+                guests: party.guests,
+                adults: party.adults,
+                children: party.children,
+                pets: party.pets,
+                customFields:
+                    Object.keys(customFieldsClean).length > 0
+                        ? JSON.stringify(customFieldsClean)
+                        : null,
                 status: 'NEW',
             },
             include: {
@@ -204,7 +351,7 @@ const createGuestRequest = async (req, res) => {
             },
         });
 
-        const mailData = emailPayload(guestRequest, property, quote);
+        const mailData = emailPayload(guestRequest, property, quote, customFieldLabels);
 
         // Await both emails (in parallel) before responding — fire-and-forget after res.json()
         // was dropping the guest confirmation when the request lifecycle ended early.
@@ -442,6 +589,9 @@ const updateGuestRequestStatus = async (req, res) => {
             checkin: request.checkin,
             checkout: request.checkout,
             guests: request.guests,
+            adults: request.adults,
+            children: request.children,
+            pets: request.pets,
             message: request.message,
         };
 
@@ -491,6 +641,9 @@ const updateGuestRequestStatus = async (req, res) => {
                             checkin,
                             checkout,
                             guests: request.guests,
+                            adults: request.adults ?? Math.max(1, request.guests || 1),
+                            children: request.children ?? 0,
+                            pets: request.pets ?? 0,
                             nights,
                             nightlyRate,
                             weekendRate,
@@ -558,6 +711,9 @@ const updateGuestRequestStatus = async (req, res) => {
                                 checkin: pending.checkin,
                                 checkout: pending.checkout,
                                 guests: pending.guests,
+                                adults: pending.adults,
+                                children: pending.children,
+                                pets: pending.pets,
                                 message: pending.message,
                             });
                         } catch (emailError) {
