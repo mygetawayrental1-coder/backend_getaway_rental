@@ -14,6 +14,7 @@ const SECTIONS = [
     'calendar',
     'features',
     'details',
+    'links',
 ];
 
 

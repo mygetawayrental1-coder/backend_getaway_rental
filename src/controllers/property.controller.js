@@ -286,7 +286,11 @@ const clearAvailability = async (req, res) => {
     }
 };
 
-const { assertCanCreateListing } = require('../services/subscriptionAccess.service');
+const {
+    assertCanCreateListing,
+    assertListingPayload,
+} = require('../services/subscriptionAccess.service');
+const { parseListingLinksFromBody } = require('../utils/listingLinks');
 
 // Create property
 const createProperty = async (req, res) => {
@@ -329,6 +333,11 @@ const createProperty = async (req, res) => {
             maxNights,
             customFields,
             locationId,
+            personalWebsiteUrl,
+            virtualTourUrl,
+            socialMediaUrls,
+            cityClassified,
+            isFeatured,
         } = req.body;
 
         // Removed captcha verification as route is protected by authentication
@@ -350,6 +359,15 @@ const createProperty = async (req, res) => {
             });
         }
 
+        const links = parseListingLinksFromBody({
+            personalWebsiteUrl,
+            virtualTourUrl,
+            socialMediaUrls,
+        });
+        if (links.error) {
+            return res.status(400).json({ success: false, message: links.error });
+        }
+
         const amenitiesList = parseBodyJsonArray(amenities) ?? amenities;
 
         const listingAccess = await assertCanCreateListing(req.user.id);
@@ -358,6 +376,24 @@ const createProperty = async (req, res) => {
                 success: false,
                 message: listingAccess.message,
             });
+        }
+
+        if (req.user.role !== 'ADMIN') {
+            const entCheck = await assertListingPayload(req.user.id, {
+                photoCount: images.length,
+                icalUrls,
+                personalWebsiteUrl: links.personalWebsiteUrl,
+                virtualTourUrl: links.virtualTourUrl,
+                socialMediaUrls: links.socialMediaUrls,
+                cityClassified,
+                isFeatured,
+            });
+            if (!entCheck.allowed) {
+                return res.status(entCheck.status).json({
+                    success: false,
+                    message: entCheck.message,
+                });
+            }
         }
 
         // Get owner ID from authenticated user or email
@@ -481,6 +517,15 @@ const createProperty = async (req, res) => {
                 minNights: minNights != null ? parseInt(minNights, 10) || 1 : 1,
                 maxNights: maxNights != null ? parseInt(maxNights, 10) || null : null,
                 customFields: stringifyJsonField(customFields),
+                personalWebsiteUrl: links.personalWebsiteUrl ?? null,
+                virtualTourUrl: links.virtualTourUrl ?? null,
+                socialMediaUrls: links.socialMediaUrls ?? null,
+                cityClassified:
+                    cityClassified === true ||
+                    cityClassified === 'true' ||
+                    cityClassified === 1,
+                isFeatured:
+                    isFeatured === true || isFeatured === 'true' || isFeatured === 1,
             },
             include: {
                 owner: {
@@ -763,14 +808,29 @@ const updateProperty = async (req, res) => {
         const fields = [
             'propertyName', 'location', 'state', 'country', 'latitude', 'longitude',
             'about', 'policyAndHouseRules', 'status', 'rentalType', 'videoUrl', 'policyDetails',
-            'checkInTime', 'checkOutTime',
+            'checkInTime', 'checkOutTime', 'personalWebsiteUrl', 'virtualTourUrl',
         ];
         const intFields = ['guests', 'bedrooms', 'bathrooms', 'kitchens', 'minRate', 'nightlyRate', 'weekendRate', 'weeklyRate', 'monthlyRate', 'areaM2', 'discountPercent', 'minNights', 'maxNights'];
-        const boolFields = ['isFeatured', 'isNew'];
+        const boolFields = ['isFeatured', 'isNew', 'cityClassified'];
         const jsonFields = ['additionalCharges', 'amenities', 'icalUrls', 'suitability', 'customFields'];
         const dateFields = ['ratePeriodStart', 'ratePeriodEnd'];
 
+        const links = parseListingLinksFromBody(updateData);
+        if (links.error) {
+            return res.status(400).json({ success: false, message: links.error });
+        }
+        if (links.personalWebsiteUrl !== undefined) {
+            data.personalWebsiteUrl = links.personalWebsiteUrl;
+        }
+        if (links.virtualTourUrl !== undefined) {
+            data.virtualTourUrl = links.virtualTourUrl;
+        }
+        if (links.socialMediaUrls !== undefined) {
+            data.socialMediaUrls = links.socialMediaUrls;
+        }
+
         fields.forEach(field => {
+            if (field === 'personalWebsiteUrl' || field === 'virtualTourUrl') return;
             if (updateData[field] !== undefined) data[field] = updateData[field];
         });
 
@@ -878,6 +938,51 @@ const updateProperty = async (req, res) => {
                 });
             }
             data.images = stringifyJsonField(combined);
+        }
+
+        if (req.user.role !== 'ADMIN') {
+            let photoCount = null;
+            if (data.images) {
+                try {
+                    photoCount = JSON.parse(data.images).length;
+                } catch {
+                    photoCount = null;
+                }
+            } else if (property.images) {
+                try {
+                    photoCount = JSON.parse(property.images).length;
+                } catch {
+                    photoCount = null;
+                }
+            }
+            const entCheck = await assertListingPayload(req.user.id, {
+                photoCount,
+                icalUrls: data.icalUrls !== undefined ? data.icalUrls : property.icalUrls,
+                personalWebsiteUrl:
+                    data.personalWebsiteUrl !== undefined
+                        ? data.personalWebsiteUrl
+                        : property.personalWebsiteUrl,
+                virtualTourUrl:
+                    data.virtualTourUrl !== undefined
+                        ? data.virtualTourUrl
+                        : property.virtualTourUrl,
+                socialMediaUrls:
+                    data.socialMediaUrls !== undefined
+                        ? data.socialMediaUrls
+                        : property.socialMediaUrls,
+                cityClassified:
+                    data.cityClassified !== undefined
+                        ? data.cityClassified
+                        : property.cityClassified,
+                isFeatured:
+                    data.isFeatured !== undefined ? data.isFeatured : property.isFeatured,
+            });
+            if (!entCheck.allowed) {
+                return res.status(entCheck.status).json({
+                    success: false,
+                    message: entCheck.message,
+                });
+            }
         }
 
         const updated = await prisma.property.update({

@@ -1040,6 +1040,20 @@ async function main() {
         console.log('Skipped notifications (already seeded)');
     }
 
+    // ============================================
+    // PAGE HEROES (marketing SEO)
+    // ============================================
+    console.log('\n--- Seeding page heroes ---');
+    const { DEFAULT_HEROES } = require('../src/controllers/web/pageHero.web.controller');
+    for (const row of DEFAULT_HEROES) {
+        await prisma.pageHeroConfig.upsert({
+            where: { pageKey: row.pageKey },
+            create: { ...row, useCmsValues: true },
+            update: {},
+        });
+    }
+    console.log(`Upserted ${DEFAULT_HEROES.length} page hero configs`);
+
     console.log('\nDatabase seeding completed.');
     console.log('\nSeed users use placeholder clerkIds (seed_admin_001, seed_owner_001, etc.).');
     console.log('Production users are created via Clerk webhooks.');
@@ -1049,6 +1063,7 @@ async function main() {
     console.log('  - 22 properties (galleries extended to 6 photos on active listings)');
     console.log('  - 8 inquiries, reviews, bookings, wishlist, notifications (on fresh DB)');
     console.log('  - 9 locations, 9 blog posts');
+    console.log('  - 8 page hero configs');
 }
 
 main().catch(console.error).finally(() => prisma.$disconnect());

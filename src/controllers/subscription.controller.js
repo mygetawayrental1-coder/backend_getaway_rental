@@ -3,6 +3,44 @@ const prisma = require('../config/database');
 const { stringifyJsonField, parseJsonField, getPagination, formatPaginatedResponse } = require('../utils/helpers');
 const { validateCouponForPlan, applyCoupon } = require('./coupon.controller');
 const { reconcileUserRole } = require('../services/subscriptionAccess.service');
+const { serializePlanForApi } = require('../utils/listingLinks');
+
+function parseOptionalIntOrNull(value) {
+    if (value === undefined) return undefined;
+    if (value === null || value === '' || value === 'unlimited') return null;
+    const n = parseInt(value, 10);
+    return Number.isNaN(n) ? null : Math.max(0, n);
+}
+
+function entitlementFieldsFromBody(body) {
+    const data = {};
+    if (body.priceUnit !== undefined) {
+        data.priceUnit = body.priceUnit === 'PER_LISTING' ? 'PER_LISTING' : 'FLAT';
+    }
+    if (body.maxPhotos !== undefined) data.maxPhotos = parseOptionalIntOrNull(body.maxPhotos);
+    if (body.maxCalendarSyncs !== undefined) {
+        data.maxCalendarSyncs = parseOptionalIntOrNull(body.maxCalendarSyncs);
+    }
+    if (body.bookingManagement !== undefined) {
+        data.bookingManagement = body.bookingManagement === true || body.bookingManagement === 'true';
+    }
+    if (body.supportType !== undefined) {
+        const s = String(body.supportType || 'EMAIL').toUpperCase();
+        data.supportType = ['EMAIL', 'TICKET', 'NONE'].includes(s) ? s : 'EMAIL';
+    }
+    for (const key of [
+        'personalWebsiteLink',
+        'socialMediaLinks',
+        'cityClassifiedListing',
+        'virtualTourLink',
+        'homepageFeaturedListing',
+    ]) {
+        if (body[key] !== undefined) {
+            data[key] = body[key] === true || body[key] === 'true' || body[key] === 1;
+        }
+    }
+    return data;
+}
 
 // Get all subscription plans
 const getAllPlans = async (req, res) => {
@@ -17,11 +55,7 @@ const getAllPlans = async (req, res) => {
             orderBy: { price: 'asc' },
         });
 
-        // Parse features JSON
-        const formattedPlans = plans.map(plan => ({
-            ...plan,
-            features: parseJsonField(plan.features),
-        }));
+        const formattedPlans = plans.map((plan) => serializePlanForApi(plan, parseJsonField));
 
         res.json({
             success: true,
@@ -54,10 +88,7 @@ const getPlanById = async (req, res) => {
 
         res.json({
             success: true,
-            data: {
-                ...plan,
-                features: parseJsonField(plan.features),
-            },
+            data: serializePlanForApi(plan, parseJsonField),
         });
     } catch (error) {
         console.error('Get plan by ID error:', error);
@@ -82,16 +113,14 @@ const createPlan = async (req, res) => {
                 features: stringifyJsonField(features),
                 status: status || 'Active',
                 maxProperties: maxProperties != null ? Math.max(1, parseInt(maxProperties, 10) || 1) : 1,
+                ...entitlementFieldsFromBody(req.body),
             },
         });
 
         res.status(201).json({
             success: true,
             message: 'Plan created successfully.',
-            data: {
-                ...plan,
-                features: parseJsonField(plan.features),
-            },
+            data: serializePlanForApi(plan, parseJsonField),
         });
     } catch (error) {
         console.error('Create plan error:', error);
@@ -116,7 +145,9 @@ const updatePlan = async (req, res) => {
             });
         }
 
-        const updateData = {};
+        const updateData = {
+            ...entitlementFieldsFromBody(req.body),
+        };
         if (name) updateData.name = name;
         if (price !== undefined) updateData.price = parseFloat(price);
         if (specialPrice !== undefined) updateData.specialPrice = specialPrice ? parseFloat(specialPrice) : null;
@@ -135,10 +166,7 @@ const updatePlan = async (req, res) => {
         res.json({
             success: true,
             message: 'Plan updated successfully.',
-            data: {
-                ...plan,
-                features: parseJsonField(plan.features),
-            },
+            data: serializePlanForApi(plan, parseJsonField),
         });
     } catch (error) {
         console.error('Update plan error:', error);
@@ -149,7 +177,9 @@ const updatePlan = async (req, res) => {
     }
 };
 
-// Delete plan (Admin only)
+// Delete plan (Admin only).
+// Plans referenced by UserSubscription cannot be hard-deleted (FK RESTRICT) —
+// deactivate them instead so pricing hides them without breaking owner history.
 const deletePlan = async (req, res) => {
     try {
         const { id } = req.params;
@@ -162,10 +192,32 @@ const deletePlan = async (req, res) => {
             });
         }
 
+        const [subCount, couponCount] = await Promise.all([
+            prisma.userSubscription.count({ where: { planId: id } }),
+            prisma.coupon.count({ where: { planId: id } }),
+        ]);
+
+        if (subCount > 0 || couponCount > 0) {
+            const plan = await prisma.subscriptionPlan.update({
+                where: { id },
+                data: { status: 'Inactive' },
+            });
+            return res.json({
+                success: true,
+                softDeleted: true,
+                message:
+                    subCount > 0
+                        ? `This plan has ${subCount} subscription(s), so it was deactivated instead of deleted. Owners keep their history; it no longer appears on pricing.`
+                        : 'This plan is linked to coupons, so it was deactivated instead of deleted.',
+                data: plan,
+            });
+        }
+
         await prisma.subscriptionPlan.delete({ where: { id } });
 
         res.json({
             success: true,
+            softDeleted: false,
             message: 'Plan deleted successfully.',
         });
     } catch (error) {

@@ -12,7 +12,10 @@
     "db:studio": "prisma studio",
     "db:generate": "prisma generate",
     "db:seed": "node prisma/seed.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "jest --runInBand --forceExit",
+    "test:unit": "jest tests/unit --runInBand --forceExit",
+    "test:integration": "jest tests/integration --runInBand --forceExit",
+    "test:watch": "jest --watch"
   },
   "keywords": [],
   "author": "",
@@ -29,6 +32,7 @@
     "express": "^5.2.1",
     "express-rate-limit": "^8.3.2",
     "express-validator": "^7.3.1",
+    "file-type": "^22.0.1",
     "ical-generator": "^10.0.0",
     "jsonwebtoken": "^9.0.3",
     "morgan": "^1.10.1",
@@ -38,14 +42,37 @@
     "nodemailer": "^7.0.12",
     "prisma": "^5.22.0",
     "resend": "^6.9.3",
+    "sharp": "^0.35.3",
     "sib-api-v3-sdk": "^8.5.0",
     "svix": "^1.93.0",
     "uuid": "^13.0.0"
   },
   "devDependencies": {
-    "nodemon": "^3.1.11"
+    "jest": "^30.4.2",
+    "nodemon": "^3.1.11",
+    "supertest": "^7.2.2"
   },
   "prisma": {
     "seed": "node prisma/seed.js"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "testMatch": [
+      "**/tests/**/*.test.js"
+    ],
+    "testTimeout": 30000,
+    "verbose": true,
+    "transformIgnorePatterns": [
+      "node_modules/(?!(uuid|file-type|strtok3|token-types|peek-readable)/)"
+    ],
+    "moduleNameMapper": {
+      "file-type": "<rootDir>/tests/__mocks__/file-type.js",
+      "^uuid$": "<rootDir>/tests/__mocks__/uuid.js",
+      "^sharp$": "<rootDir>/tests/__mocks__/sharp.js"
+    },
+    "collectCoverageFrom": [
+      "src/**/*.js",
+      "!src/config/database.js"
+    ]
   }
 }

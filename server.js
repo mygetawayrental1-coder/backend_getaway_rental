@@ -62,6 +62,13 @@ Hints:
 ║                                                            ║
 ╚════════════════════════════════════════════════════════════╝
   `);
+        const uploadDir = process.env.UPLOAD_DIR || './uploads';
+        console.log(`Upload dir: ${require('path').resolve(uploadDir)}`);
+        if (!process.env.UPLOAD_DIR || uploadDir === './uploads') {
+            console.warn(
+                '⚠ UPLOAD_DIR is unset or ./uploads. On Railway, set UPLOAD_DIR to your volume mount path (you use /uploads).',
+            );
+        }
     });
 
     const shutdown = (signal) => {

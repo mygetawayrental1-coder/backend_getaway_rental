@@ -2,6 +2,14 @@ const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
 const path = require('path');
+const {
+    globalLimiter,
+    authLimiter,
+    bookingLimiter,
+    uploadLimiter,
+    guestRequestLimiter,
+    paymentLimiter,
+} = require('./middleware/rateLimit');
 
 // Import routes
 const authRoutes = require('./routes/auth.routes');
@@ -35,6 +43,7 @@ const webNewsletterRoutes = require('./routes/web/newsletter.routes');
 const webContactRoutes = require('./routes/web/contact.routes');
 const webPricingRoutes = require('./routes/web/pricing.routes');
 const webHostsRoutes = require('./routes/web/hosts.routes');
+const webPageHeroRoutes = require('./routes/web/pageHero.routes');
 const { startIcalScheduler } = require('./utils/ical.scheduler');
 
 const app = express();
@@ -51,6 +60,9 @@ app.use(cors({
     origin: '*',
     credentials: true,
 }));
+
+// Global rate limiter — 500 requests / IP / 15 min
+app.use(globalLimiter);
 
 // Clerk webhooks require raw body for signature verification (must be before express.json)
 app.use('/webhooks', webhookRoutes);
@@ -97,19 +109,20 @@ app.get('/', (req, res) => {
 });
 
 // API Routes (mobile + admin)
-app.use('/auth', authRoutes);
+// Route-specific rate limiters are applied before each sensitive router.
+app.use('/auth', authLimiter, authRoutes);
 app.use('/properties', propertyRoutes);
 app.use('/inquiries', inquiryRoutes);
 app.use('/users', userRoutes);
 app.use('/user', userRoutes); // Alias for mobile app compatibility
 app.use('/owners', ownerRoutes);
 app.use('/subscriptions', subscriptionRoutes);
-app.use('/payments', paymentRoutes);
-app.use('/uploads', uploadRoutes);
+app.use('/payments', paymentLimiter, paymentRoutes);
+app.use('/uploads', uploadLimiter, uploadRoutes);
 app.use('/dashboard', dashboardRoutes);
 app.use('/captcha', captchaRoutes);
-app.use('/guest-requests', guestRequestRoutes);
-app.use('/bookings', bookingRoutes);
+app.use('/guest-requests', guestRequestLimiter, guestRequestRoutes);
+app.use('/bookings', bookingLimiter, bookingRoutes);
 app.use('/notifications', notificationRoutes);
 app.use('/payouts', payoutRoutes);
 app.use('/messages', messageRoutes);
@@ -130,6 +143,7 @@ app.use('/api/web/newsletter', webNewsletterRoutes);
 app.use('/api/web/contact', webContactRoutes);
 app.use('/api/web/pricing', webPricingRoutes);
 app.use('/api/web/hosts', webHostsRoutes);
+app.use('/api/web/page-heroes', webPageHeroRoutes);
 
 // 404 Handler
 app.use((req, res) => {

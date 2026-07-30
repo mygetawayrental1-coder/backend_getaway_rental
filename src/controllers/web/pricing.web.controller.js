@@ -1,5 +1,6 @@
 const prisma = require('../../config/database');
 const { parseJsonField } = require('../../utils/helpers');
+const { serializePlanForApi } = require('../../utils/listingLinks');
 
 exports.getPricingPlans = async (req, res) => {
     try {
@@ -8,10 +9,7 @@ exports.getPricingPlans = async (req, res) => {
             orderBy: { price: 'asc' },
         });
 
-        const formattedPlans = plans.map((plan) => ({
-            ...plan,
-            features: parseJsonField(plan.features),
-        }));
+        const formattedPlans = plans.map((plan) => serializePlanForApi(plan, parseJsonField));
 
         res.json({
             success: true,

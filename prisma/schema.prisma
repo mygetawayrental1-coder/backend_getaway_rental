@@ -8,7 +8,7 @@
 //   • Node/Express Backend    (@clerk/express + @clerk/backend)
 //
 // Auth: Full Clerk — NO legacy JWT, NO passwords stored
-// DB:   PostgreSQL (Render)
+// DB:   PostgreSQL (Railway)
 // ORM:  Prisma 5
 // =============================================================
 
@@ -129,6 +129,12 @@ model Property {
   // Media
   images   String? // JSON: [url, url, ...]
   videoUrl String?
+
+  // Owner / marketing links (plan-gated later)
+  personalWebsiteUrl String?
+  virtualTourUrl     String? // YouTube virtual tour
+  socialMediaUrls    String? // JSON: { facebook, instagram, x, tiktok, youtube, linkedin }
+  cityClassified      Boolean @default(false)
 
   // Rules
   policyAndHouseRules String?
@@ -413,8 +419,22 @@ model SubscriptionPlan {
   specialPrice  Float?
   duration      String  // Monthly | Yearly
   maxProperties Int     @default(1) // how many listings this plan allows
-  features      String? // JSON: ["Feature 1", "Feature 2", ...]
+  features      String? // JSON: ["Feature 1", "Feature 2", ...] — optional custom bullets
   status        String  @default("Active") // Active | Inactive
+
+  /// FLAT | PER_LISTING — controls price display ($199 vs $299/Listing)
+  priceUnit String @default("FLAT")
+
+  // Structured entitlements (null max* = unlimited)
+  maxPhotos            Int?
+  maxCalendarSyncs     Int?
+  bookingManagement    Boolean @default(true)
+  supportType          String  @default("EMAIL") // EMAIL | TICKET | NONE
+  personalWebsiteLink  Boolean @default(false)
+  socialMediaLinks     Boolean @default(false)
+  cityClassifiedListing Boolean @default(false)
+  virtualTourLink      Boolean @default(false)
+  homepageFeaturedListing Boolean @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -898,5 +918,29 @@ model BookingCharge {
   updatedAt DateTime @updatedAt
 
   @@index([isActive])
+  @@index([sortOrder])
+}
+
+/// Marketing page hero SEO (H1, description, image, meta) — edited from admin
+model PageHeroConfig {
+  id              String   @id @default(cuid())
+  pageKey         String   @unique
+  label           String
+  path            String
+  title           String
+  description     String   @db.Text
+  imageUrl        String
+  imageAlt        String?
+  breadcrumbLabel String?
+  eyebrow         String?
+  size            String   @default("md")
+  metaTitle       String?
+  metaDescription String?  @db.Text
+  useCmsValues    Boolean  @default(true)
+  sortOrder       Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([useCmsValues])
   @@index([sortOrder])
 }
