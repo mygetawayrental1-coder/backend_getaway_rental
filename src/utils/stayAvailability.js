@@ -15,20 +15,182 @@ function calculateNights(checkinDate, checkoutDate) {
 
 /** Nightly + weekend rates for each night [checkin, checkout). */
 function calculateTotalAmount(checkinDate, checkoutDate, nightlyRate, weekendRate) {
-    let total = 0;
-    const cur = new Date(checkinDate);
-    const end = new Date(checkoutDate);
+    return calculateStayQuote({
+        checkin: checkinDate,
+        checkout: checkoutDate,
+        nightlyRate,
+        weekendRate,
+        seasons: [],
+    }).subtotal;
+}
+
+function toUtcDay(value) {
+    if (!value) return null;
+    if (value instanceof Date) return utcStartOfDay(value);
+    const s = String(value);
+    if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
+        const [y, m, d] = s.slice(0, 10).split('-').map(Number);
+        return new Date(Date.UTC(y, m - 1, d));
+    }
+    return utcStartOfDay(value);
+}
+
+/** Inclusive season coverage: startDate <= night <= endDate (UTC days). */
+function findSeasonForNight(night, seasons) {
+    if (!Array.isArray(seasons) || !seasons.length) return null;
+    for (const s of seasons) {
+        if (s && s.isActive === false) continue;
+        const start = toUtcDay(s.startDate);
+        const end = toUtcDay(s.endDate);
+        if (!start || !end) continue;
+        if (night >= start && night <= end) return s;
+    }
+    return null;
+}
+
+/**
+ * Per-night quote with seasonal overrides.
+ * @returns {{ nights: number, subtotal: number, nightlyBreakdown: Array<{ date: string, rate: number, seasonName: string|null, isWeekend: boolean }> }}
+ */
+function calculateStayQuote({
+    checkin,
+    checkout,
+    nightlyRate = 0,
+    weekendRate = null,
+    seasons = [],
+} = {}) {
+    const start = toUtcDay(checkin);
+    const end = toUtcDay(checkout);
+    const breakdown = [];
+    if (!start || !end || !(start < end)) {
+        return { nights: 0, subtotal: 0, nightlyBreakdown: breakdown };
+    }
+
+    const baseNightly = Number(nightlyRate) || 0;
+    const baseWeekend =
+        weekendRate != null && Number(weekendRate) > 0 ? Number(weekendRate) : null;
+
+    const activeSeasons = (Array.isArray(seasons) ? seasons : []).filter(
+        (s) => s && s.isActive !== false,
+    );
+
+    let subtotal = 0;
+    const cur = new Date(start);
     while (cur < end) {
         const day = cur.getUTCDay();
         const isWeekend = day === 0 || day === 6;
-        const rate =
-            isWeekend && weekendRate != null && weekendRate > 0
-                ? weekendRate
-                : nightlyRate;
-        total += rate;
+        const season = findSeasonForNight(cur, activeSeasons);
+        let rate = baseNightly;
+        let seasonName = null;
+        if (season) {
+            seasonName = season.name || 'Season';
+            const sNight = Number(season.nightlyRate) || baseNightly;
+            const sWeekend =
+                season.weekendRate != null && Number(season.weekendRate) > 0
+                    ? Number(season.weekendRate)
+                    : null;
+            rate = isWeekend && sWeekend != null ? sWeekend : sNight;
+            // If season has no weekend rate, still allow property weekend rate
+            if (isWeekend && sWeekend == null && baseWeekend != null) {
+                rate = baseWeekend;
+            }
+        } else if (isWeekend && baseWeekend != null) {
+            rate = baseWeekend;
+        }
+
+        const iso = `${cur.getUTCFullYear()}-${String(cur.getUTCMonth() + 1).padStart(2, '0')}-${String(cur.getUTCDate()).padStart(2, '0')}`;
+        breakdown.push({ date: iso, rate, seasonName, isWeekend });
+        subtotal += rate;
         cur.setUTCDate(cur.getUTCDate() + 1);
     }
-    return total;
+
+    return {
+        nights: breakdown.length,
+        subtotal,
+        nightlyBreakdown: breakdown,
+    };
+}
+
+/** Parse seasonalPrices from request body (JSON string or array). */
+function parseSeasonalPricesInput(raw) {
+    let list = raw;
+    if (typeof raw === 'string') {
+        try {
+            list = JSON.parse(raw);
+        } catch {
+            return { error: 'Invalid seasonalPrices JSON.' };
+        }
+    }
+    if (list == null) return { seasons: null };
+    if (!Array.isArray(list)) return { error: 'seasonalPrices must be an array.' };
+
+    const seasons = [];
+    for (let i = 0; i < list.length; i++) {
+        const row = list[i] || {};
+        const start = toUtcDay(row.startDate);
+        const end = toUtcDay(row.endDate);
+        const nightly = parseInt(row.nightlyRate, 10);
+        if (!start || !end) {
+            return { error: `Season ${i + 1}: start and end dates are required.` };
+        }
+        if (start > end) {
+            return { error: `Season ${i + 1}: end date must be on or after start date.` };
+        }
+        if (!Number.isFinite(nightly) || nightly <= 0) {
+            return { error: `Season ${i + 1}: nightly rate must be greater than 0.` };
+        }
+        let weekend = null;
+        if (row.weekendRate != null && String(row.weekendRate).trim() !== '') {
+            weekend = parseInt(row.weekendRate, 10);
+            if (!Number.isFinite(weekend) || weekend < 0) {
+                return { error: `Season ${i + 1}: weekend rate is invalid.` };
+            }
+            if (weekend === 0) weekend = null;
+        }
+        seasons.push({
+            name: row.name != null && String(row.name).trim() ? String(row.name).trim() : null,
+            startDate: start,
+            endDate: end,
+            nightlyRate: nightly,
+            weekendRate: weekend,
+            isActive: row.isActive !== false && row.isActive !== 'false',
+        });
+    }
+
+    // Overlap check among active seasons
+    const active = seasons.filter((s) => s.isActive);
+    for (let i = 0; i < active.length; i++) {
+        for (let j = i + 1; j < active.length; j++) {
+            const a = active[i];
+            const b = active[j];
+            if (a.startDate <= b.endDate && b.startDate <= a.endDate) {
+                return {
+                    error: `Seasonal periods overlap: "${a.name || 'Season'}" and "${b.name || 'Season'}".`,
+                };
+            }
+        }
+    }
+
+    return { seasons };
+}
+
+/** Replace-all seasonal prices for a property (transaction-friendly). */
+async function syncSeasonalPrices(db, propertyId, seasons) {
+    await db.seasonalPrice.deleteMany({ where: { propertyId } });
+    if (!seasons?.length) return [];
+    await db.seasonalPrice.createMany({
+        data: seasons.map((s) => ({
+            propertyId,
+            name: s.name,
+            startDate: s.startDate,
+            endDate: s.endDate,
+            nightlyRate: s.nightlyRate,
+            weekendRate: s.weekendRate,
+            isActive: s.isActive !== false,
+        })),
+    });
+    // Caller reloads property outside the transaction when needed.
+    return [];
 }
 
 function validateDateRange(checkinDate, checkoutDate) {
@@ -231,6 +393,10 @@ module.exports = {
     utcStartOfDay,
     calculateNights,
     calculateTotalAmount,
+    calculateStayQuote,
+    findSeasonForNight,
+    parseSeasonalPricesInput,
+    syncSeasonalPrices,
     validateDateRange,
     findStayConflicts,
     hasConflicts,

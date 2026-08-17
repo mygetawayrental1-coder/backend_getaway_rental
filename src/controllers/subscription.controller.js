@@ -21,6 +21,9 @@ function entitlementFieldsFromBody(body) {
     if (body.maxCalendarSyncs !== undefined) {
         data.maxCalendarSyncs = parseOptionalIntOrNull(body.maxCalendarSyncs);
     }
+    if (body.maxDescriptionLength !== undefined) {
+        data.maxDescriptionLength = parseOptionalIntOrNull(body.maxDescriptionLength);
+    }
     if (body.bookingManagement !== undefined) {
         data.bookingManagement = body.bookingManagement === true || body.bookingManagement === 'true';
     }
@@ -34,6 +37,8 @@ function entitlementFieldsFromBody(body) {
         'cityClassifiedListing',
         'virtualTourLink',
         'homepageFeaturedListing',
+        'unlimitedTextDescription',
+        'unlimitedDescription',
     ]) {
         if (body[key] !== undefined) {
             data[key] = body[key] === true || body[key] === 'true' || body[key] === 1;

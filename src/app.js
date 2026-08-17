@@ -45,6 +45,7 @@ const webContactRoutes = require('./routes/web/contact.routes');
 const webPricingRoutes = require('./routes/web/pricing.routes');
 const webHostsRoutes = require('./routes/web/hosts.routes');
 const webPageHeroRoutes = require('./routes/web/pageHero.routes');
+const siteSettingsRoutes = require('./routes/siteSettings.routes');
 const { startIcalScheduler } = require('./utils/ical.scheduler');
 
 const app = express();
@@ -147,6 +148,8 @@ app.use('/api/web/contact', webContactRoutes);
 app.use('/api/web/pricing', webPricingRoutes);
 app.use('/api/web/hosts', webHostsRoutes);
 app.use('/api/web/page-heroes', webPageHeroRoutes);
+app.use('/api/web/site-settings', siteSettingsRoutes); // Public read (contact)
+app.use('/site-settings', siteSettingsRoutes);         // Admin write
 
 // 404 Handler
 app.use((req, res) => {

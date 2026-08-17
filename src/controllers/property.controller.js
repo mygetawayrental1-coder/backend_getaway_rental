@@ -291,6 +291,14 @@ const {
     assertListingPayload,
 } = require('../services/subscriptionAccess.service');
 const { parseListingLinksFromBody } = require('../utils/listingLinks');
+const {
+    parseSeasonalPricesInput,
+    syncSeasonalPrices,
+} = require('../utils/stayAvailability');
+
+const SEASONAL_INCLUDE = {
+    seasonalPrices: { orderBy: { startDate: 'asc' } },
+};
 
 // Create property
 const createProperty = async (req, res) => {
@@ -338,7 +346,15 @@ const createProperty = async (req, res) => {
             socialMediaUrls,
             cityClassified,
             isFeatured,
+            seasonalPrices: seasonalPricesRaw,
         } = req.body;
+
+        const seasonalParsed = parseSeasonalPricesInput(
+            seasonalPricesRaw !== undefined ? seasonalPricesRaw : null,
+        );
+        if (seasonalParsed.error) {
+            return res.status(400).json({ success: false, message: seasonalParsed.error });
+        }
 
         // Removed captcha verification as route is protected by authentication
 
@@ -479,59 +495,89 @@ const createProperty = async (req, res) => {
         }
         const slug = await ensureUniquePropertySlug(prisma, requestedSlug);
 
-        const property = await prisma.property.create({
-            data: {
-                propertyName,
-                location: String(locationText).trim(),
-                state: stateText || null,
-                country: countryText || null,
-                latitude: latText || null,
-                longitude: lngText || null,
-                locationId: resolvedLocationId,
-                guests: parseInt(guests) || 0,
-                bedrooms: parseInt(bedrooms) || 0,
-                bathrooms: parseInt(bathrooms) || 0,
-                kitchens: parseInt(kitchens) || 0,
-                ratePeriodStart: ratePeriodStart ? new Date(ratePeriodStart) : null,
-                ratePeriodEnd: ratePeriodEnd ? new Date(ratePeriodEnd) : null,
-                minRate: parseInt(minRate) || 0,
-                nightlyRate: parseInt(nightlyRate) || 0,
-                weekendRate: parseInt(weekendRate) || 0,
-                weeklyRate: parseInt(weeklyRate) || 0,
-                monthlyRate: parseInt(monthlyRate) || 0,
-                additionalCharges: stringifyJsonField(additionalCharges),
-                amenities: stringifyJsonField(amenitiesList),
-                about,
-                policyAndHouseRules,
-                images: stringifyJsonField(images),
-                icalUrls: stringifyJsonField(icalUrls),
-                ownerId,
-                slug,
-                rentalType: rentalType || null,
-                areaM2: areaM2 != null ? parseInt(areaM2, 10) || null : null,
-                discountPercent: discountPercent != null ? parseInt(discountPercent, 10) || null : null,
-                videoUrl: videoUrl || null,
-                suitability: suitability ? (typeof suitability === 'string' ? suitability : JSON.stringify(suitability)) : null,
-                checkInTime: checkInTime || null,
-                checkOutTime: checkOutTime || null,
-                minNights: minNights != null ? parseInt(minNights, 10) || 1 : 1,
-                maxNights: maxNights != null ? parseInt(maxNights, 10) || null : null,
-                customFields: stringifyJsonField(customFields),
-                personalWebsiteUrl: links.personalWebsiteUrl ?? null,
-                virtualTourUrl: links.virtualTourUrl ?? null,
-                socialMediaUrls: links.socialMediaUrls ?? null,
-                cityClassified:
-                    cityClassified === true ||
-                    cityClassified === 'true' ||
-                    cityClassified === 1,
-                isFeatured:
-                    isFeatured === true || isFeatured === 'true' || isFeatured === 1,
+        const createdId = await prisma.$transaction(
+            async (tx) => {
+                const created = await tx.property.create({
+                    data: {
+                        propertyName,
+                        location: String(locationText).trim(),
+                        state: stateText || null,
+                        country: countryText || null,
+                        latitude: latText || null,
+                        longitude: lngText || null,
+                        locationId: resolvedLocationId,
+                        guests: parseInt(guests) || 0,
+                        bedrooms: parseInt(bedrooms) || 0,
+                        bathrooms: parseInt(bathrooms) || 0,
+                        kitchens: parseInt(kitchens) || 0,
+                        ratePeriodStart: ratePeriodStart ? new Date(ratePeriodStart) : null,
+                        ratePeriodEnd: ratePeriodEnd ? new Date(ratePeriodEnd) : null,
+                        minRate: parseInt(minRate) || 0,
+                        nightlyRate: parseInt(nightlyRate) || 0,
+                        weekendRate: parseInt(weekendRate) || 0,
+                        weeklyRate: parseInt(weeklyRate) || 0,
+                        monthlyRate: parseInt(monthlyRate) || 0,
+                        additionalCharges: stringifyJsonField(additionalCharges),
+                        amenities: stringifyJsonField(amenitiesList),
+                        about,
+                        policyAndHouseRules,
+                        images: stringifyJsonField(images),
+                        icalUrls: stringifyJsonField(icalUrls),
+                        ownerId,
+                        slug,
+                        rentalType: rentalType || null,
+                        areaM2: areaM2 != null ? parseInt(areaM2, 10) || null : null,
+                        discountPercent: discountPercent != null ? parseInt(discountPercent, 10) || null : null,
+                        videoUrl: videoUrl || null,
+                        suitability: suitability ? (typeof suitability === 'string' ? suitability : JSON.stringify(suitability)) : null,
+                        checkInTime: checkInTime || null,
+                        checkOutTime: checkOutTime || null,
+                        minNights: minNights != null ? parseInt(minNights, 10) || 1 : 1,
+                        maxNights: maxNights != null ? parseInt(maxNights, 10) || null : null,
+                        customFields: stringifyJsonField(customFields),
+                        personalWebsiteUrl: links.personalWebsiteUrl ?? null,
+                        virtualTourUrl: links.virtualTourUrl ?? null,
+                        socialMediaUrls: links.socialMediaUrls ?? null,
+                        cityClassified:
+                            cityClassified === true ||
+                            cityClassified === 'true' ||
+                            cityClassified === 1,
+                        isFeatured:
+                            isFeatured === true || isFeatured === 'true' || isFeatured === 1,
+                    },
+                });
+
+                if (seasonalParsed.seasons) {
+                    await syncSeasonalPrices(tx, created.id, seasonalParsed.seasons);
+                } else if (ratePeriodStart && ratePeriodEnd) {
+                    // Legacy single period → one seasonal row
+                    const legacy = parseSeasonalPricesInput([
+                        {
+                            name: 'Season',
+                            startDate: ratePeriodStart,
+                            endDate: ratePeriodEnd,
+                            nightlyRate: parseInt(nightlyRate, 10) || parseInt(minRate, 10) || 0,
+                            weekendRate: parseInt(weekendRate, 10) || null,
+                        },
+                    ]);
+                    if (!legacy.error && legacy.seasons?.length) {
+                        await syncSeasonalPrices(tx, created.id, legacy.seasons);
+                    }
+                }
+
+                return created.id;
             },
+            { maxWait: 10000, timeout: 30000 },
+        );
+
+        const property = await prisma.property.findUnique({
+            where: { id: createdId },
             include: {
                 owner: {
                     select: { id: true, email: true, firstName: true, lastName: true },
                 },
                 catalogLocation: true,
+                ...SEASONAL_INCLUDE,
             },
         });
 
@@ -603,6 +649,7 @@ const getAllProperties = async (req, res) => {
                     owner: {
                         select: { id: true, email: true, firstName: true, lastName: true },
                     },
+                    ...SEASONAL_INCLUDE,
                 },
             }),
             prisma.property.count({ where }),
@@ -640,6 +687,7 @@ const getPropertyById = async (req, res) => {
                     select: { id: true, email: true, firstName: true, lastName: true, phoneNumber: true },
                 },
                 catalogLocation: true,
+                ...SEASONAL_INCLUDE,
             },
         });
 
@@ -711,6 +759,7 @@ const getMyProperties = async (req, res) => {
                 skip: pagination.skip,
                 take: pagination.take,
                 orderBy: { createdAt: 'desc' },
+                include: SEASONAL_INCLUDE,
             }),
             prisma.property.count({ where }),
         ]);
@@ -762,6 +811,7 @@ const getPropertiesByEmail = async (req, res) => {
         const properties = await prisma.property.findMany({
             where: { ownerId: owner.id },
             orderBy: { createdAt: 'desc' },
+            include: SEASONAL_INCLUDE,
         });
 
         res.json({
@@ -985,14 +1035,42 @@ const updateProperty = async (req, res) => {
             }
         }
 
-        const updated = await prisma.property.update({
+        let seasonalToSync = undefined;
+        if (updateData.seasonalPrices !== undefined) {
+            const seasonalParsed = parseSeasonalPricesInput(updateData.seasonalPrices);
+            if (seasonalParsed.error) {
+                return res.status(400).json({ success: false, message: seasonalParsed.error });
+            }
+            seasonalToSync = seasonalParsed.seasons || [];
+            console.log(
+                `[property.update] ${property.id} seasonalPrices:`,
+                Array.isArray(seasonalToSync) ? seasonalToSync.length : 0,
+                'row(s)',
+            );
+        }
+
+        await prisma.$transaction(
+            async (tx) => {
+                await tx.property.update({
+                    where: { id: property.id },
+                    data,
+                });
+                if (seasonalToSync !== undefined) {
+                    await syncSeasonalPrices(tx, property.id, seasonalToSync);
+                }
+            },
+            // Railway proxy latency often exceeds Prisma's default 5s interactive tx timeout.
+            { maxWait: 10000, timeout: 30000 },
+        );
+
+        const updated = await prisma.property.findUnique({
             where: { id: property.id },
-            data,
             include: {
                 owner: {
                     select: { id: true, email: true, firstName: true, lastName: true },
                 },
                 catalogLocation: true,
+                ...SEASONAL_INCLUDE,
             },
         });
 
@@ -1011,6 +1089,36 @@ const updateProperty = async (req, res) => {
                 console.error('Failed to parse icalUrls for sync:', err);
             }
         }
+
+        // When status is modified by admin, optionally send email & notification to host
+        if (req.user.role === 'ADMIN' && data.status !== undefined && updated.owner) {
+            const reason = updateData.reason || '';
+            const shouldNotify = updateData.notifyOwner !== false && updateData.notifyOwner !== 'false';
+
+            if (shouldNotify && updated.owner.email) {
+                const { sendListingStatusChangeEmail } = require('../services/email.service');
+                const { createTypedNotification, NOTIFICATION_TYPES } = require('../services/notification.service');
+
+                sendListingStatusChangeEmail({
+                    to: updated.owner.email,
+                    ownerName: `${updated.owner.firstName || ''} ${updated.owner.lastName || ''}`.trim() || 'Host',
+                    propertyName: updated.propertyName,
+                    status: data.status,
+                    reason,
+                }).catch(err => console.error('[email] Failed to send listing status email:', err.message));
+
+                createTypedNotification(updated.owner.id, NOTIFICATION_TYPES.PROPERTY_STATUS_CHANGED, {
+                    propertyName: updated.propertyName,
+                    status: data.status,
+                    reason,
+                    propertyId: updated.id,
+                }).catch(err => console.error('[notification] Failed to create listing status notification:', err.message));
+            }
+        }
+
+        // Trigger on-demand cache revalidation on the website
+        const { triggerWebsiteRevalidation } = require('../utils/revalidate');
+        triggerWebsiteRevalidation({ tags: ['featured-properties', 'locations', 'homepage'], paths: ['/', '/search-rental-full-map'] });
 
         res.json({
             success: true,
@@ -1150,6 +1258,48 @@ const getLocationSuggestions = async (req, res) => {
     }
 };
 
+/**
+ * PATCH /properties/:id/toggle-featured (Admin only)
+ * Toggles or sets the isFeatured status of a property.
+ */
+const toggleFeatured = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const property = await resolvePropertyByParam(id);
+        if (!property) {
+            return res.status(404).json({ success: false, message: 'Property not found.' });
+        }
+
+        const isFeatured =
+            req.body.isFeatured !== undefined
+                ? Boolean(req.body.isFeatured)
+                : !property.isFeatured;
+
+        const updated = await prisma.property.update({
+            where: { id: property.id },
+            data: { isFeatured },
+            include: {
+                owner: {
+                    select: { id: true, email: true, firstName: true, lastName: true },
+                },
+                catalogLocation: true,
+                ...SEASONAL_INCLUDE,
+            },
+        });
+
+        res.json({
+            success: true,
+            message: isFeatured
+                ? `"${property.propertyName}" is now featured on the homepage.`
+                : `"${property.propertyName}" was removed from Recommended Homes.`,
+            data: formatPropertyResponse(updated),
+        });
+    } catch (error) {
+        console.error('Toggle featured error:', error);
+        res.status(500).json({ success: false, message: 'Failed to update featured status.' });
+    }
+};
+
 module.exports = {
     createProperty,
     getAllProperties,
@@ -1163,4 +1313,6 @@ module.exports = {
     getAvailability,
     setAvailability,
     clearAvailability,
+    toggleFeatured,
 };
+

@@ -15,7 +15,7 @@ const {
 const {
     utcStartOfDay,
     calculateNights,
-    calculateTotalAmount,
+    calculateStayQuote,
     findStayConflicts,
     hasConflicts,
     conflictMessage,
@@ -221,7 +221,60 @@ const createGuestRequest = async (req, res) => {
             }
         }
 
-        const quote = {
+        const property = await prisma.property.findFirst({
+            where: { OR: [{ id: propertyId }, { propertyId }] },
+            include: {
+                owner: {
+                    select: {
+                        id: true,
+                        email: true,
+                        firstName: true,
+                        phoneNumber: true,
+                        countryCode: true,
+                    },
+                },
+                seasonalPrices: {
+                    where: { isActive: true },
+                    orderBy: { startDate: 'asc' },
+                },
+            },
+        });
+
+        if (!property) {
+            return res.status(404).json({
+                success: false,
+                message: 'Property not found.',
+            });
+        }
+
+        if (!property.owner?.email) {
+            return res.status(400).json({
+                success: false,
+                message: 'This property has no owner email on file. Please contact support.',
+            });
+        }
+
+        if (checkin && checkout) {
+            const conflicts = await findStayConflicts(property.id, checkin, checkout);
+            if (hasConflicts(conflicts)) {
+                return res.status(409).json({
+                    success: false,
+                    message: conflictMessage(conflicts),
+                    conflicts,
+                });
+            }
+        }
+
+        const maxGuests = Number(property.guests) || 0;
+        if (maxGuests > 0 && party.guests > maxGuests) {
+            return res.status(400).json({
+                success: false,
+                message: `This property allows up to ${maxGuests} guests (adults + children).`,
+            });
+        }
+
+        // Prefer server-side seasonal quote so email estimates match booking math.
+        let quote = {
             nights: Number.isFinite(Number(nights)) ? Number(nights) : null,
             quotedNightlyRate: Number.isFinite(Number(quotedNightlyRate))
                 ? Number(quotedNightlyRate)
@@ -237,6 +290,27 @@ const createGuestRequest = async (req, res) => {
                 : null,
             quotedTotal: Number.isFinite(Number(quotedTotal)) ? Number(quotedTotal) : null,
         };
+        if (checkin && checkout) {
+            const stayQuote = calculateStayQuote({
+                checkin,
+                checkout,
+                nightlyRate: property.nightlyRate,
+                weekendRate: property.weekendRate,
+                seasons: property.seasonalPrices || [],
+            });
+            if (stayQuote.nights > 0) {
+                const fees =
+                    (Number(quote.quotedServiceFee) || 0) +
+                    (Number(quote.quotedDynamicFees) || 0);
+                quote = {
+                    ...quote,
+                    nights: stayQuote.nights,
+                    quotedNightlyRate: Math.round(stayQuote.subtotal / stayQuote.nights),
+                    quotedSubtotal: stayQuote.subtotal,
+                    quotedTotal: stayQuote.subtotal + fees,
+                };
+            }
+        }
 
         const quoteLines = [];
         quoteLines.push(
@@ -276,54 +350,6 @@ const createGuestRequest = async (req, res) => {
                       .join('\n')
                       .trim()
                 : baseMessage || null;
-
-        const property = await prisma.property.findFirst({
-            where: { OR: [{ id: propertyId }, { propertyId }] },
-            include: {
-                owner: {
-                    select: {
-                        id: true,
-                        email: true,
-                        firstName: true,
-                        phoneNumber: true,
-                        countryCode: true,
-                    },
-                },
-            },
-        });
-
-        if (!property) {
-            return res.status(404).json({
-                success: false,
-                message: 'Property not found.',
-            });
-        }
-
-        if (!property.owner?.email) {
-            return res.status(400).json({
-                success: false,
-                message: 'This property has no owner email on file. Please contact support.',
-            });
-        }
-
-        if (checkin && checkout) {
-            const conflicts = await findStayConflicts(property.id, checkin, checkout);
-            if (hasConflicts(conflicts)) {
-                return res.status(409).json({
-                    success: false,
-                    message: conflictMessage(conflicts),
-                    conflicts,
-                });
-            }
-        }
-
-        const maxGuests = Number(property.guests) || 0;
-        if (maxGuests > 0 && party.guests > maxGuests) {
-            return res.status(400).json({
-                success: false,
-                message: `This property allows up to ${maxGuests} guests (adults + children).`,
-            });
-        }
 
         const guestRequest = await prisma.guestRequest.create({
             data: {
@@ -550,6 +576,10 @@ const updateGuestRequestStatus = async (req, res) => {
                         propertyName: true,
                         nightlyRate: true,
                         weekendRate: true,
+                        seasonalPrices: {
+                            where: { isActive: true },
+                            orderBy: { startDate: 'asc' },
+                        },
                         owner: {
                             select: {
                                 id: true,
@@ -605,15 +635,17 @@ const updateGuestRequestStatus = async (req, res) => {
 
             const checkin = startOfDay(request.checkin);
             const checkout = startOfDay(request.checkout);
-            const nights = Math.max(1, calculateNights(checkin, checkout));
             const nightlyRate = request.property.nightlyRate || 0;
             const weekendRate = request.property.weekendRate || null;
-            const totalAmount = calculateTotalAmount(
+            const quote = calculateStayQuote({
                 checkin,
                 checkout,
                 nightlyRate,
                 weekendRate,
-            );
+                seasons: request.property.seasonalPrices || [],
+            });
+            const nights = Math.max(1, quote.nights || calculateNights(checkin, checkout));
+            const totalAmount = quote.subtotal;
 
             try {
                 const txResult = await prisma.$transaction(async (tx) => {

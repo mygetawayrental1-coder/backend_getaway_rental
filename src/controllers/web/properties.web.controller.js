@@ -236,7 +236,50 @@ exports.searchProperties = async (req, res) => {
             prisma.property.count({ where }),
         ]);
 
-        const properties = await enrichWithReviewStats(rows);
+        let properties = await enrichWithReviewStats(rows);
+
+        if (!sort || sort === 'newest') {
+            const locKey = (catalogLoc?.slug || catalogLoc?.name || location_slug || location_name || '').trim().toLowerCase();
+            const catKey = (rental_type || '').trim().toLowerCase();
+
+            if (locKey) {
+                try {
+                    const row = await prisma.siteSettings.findUnique({ where: { key: 'destination_order' } });
+                    if (row) {
+                        const orderData = JSON.parse(row.value);
+                        const rankingIds = orderData[locKey] || orderData[locKey.replace(/\s+/g, '-')];
+                        if (Array.isArray(rankingIds) && rankingIds.length) {
+                            const rankMap = new Map(rankingIds.map((id, index) => [String(id), index]));
+                            properties = [...properties].sort((a, b) => {
+                                const rankA = rankMap.has(String(a.id)) ? rankMap.get(String(a.id)) : (rankMap.has(String(a.propertyId)) ? rankMap.get(String(a.propertyId)) : 999999);
+                                const rankB = rankMap.has(String(b.id)) ? rankMap.get(String(b.id)) : (rankMap.has(String(b.propertyId)) ? rankMap.get(String(b.propertyId)) : 999999);
+                                return rankA - rankB;
+                            });
+                        }
+                    }
+                } catch (err) {
+                    console.error('[web/properties] destination custom order error:', err);
+                }
+            } else if (catKey) {
+                try {
+                    const row = await prisma.siteSettings.findUnique({ where: { key: 'category_order' } });
+                    if (row) {
+                        const orderData = JSON.parse(row.value);
+                        const rankingIds = orderData[catKey] || orderData[catKey.replace(/\s+/g, '-')];
+                        if (Array.isArray(rankingIds) && rankingIds.length) {
+                            const rankMap = new Map(rankingIds.map((id, index) => [String(id), index]));
+                            properties = [...properties].sort((a, b) => {
+                                const rankA = rankMap.has(String(a.id)) ? rankMap.get(String(a.id)) : (rankMap.has(String(a.propertyId)) ? rankMap.get(String(a.propertyId)) : 999999);
+                                const rankB = rankMap.has(String(b.id)) ? rankMap.get(String(b.id)) : (rankMap.has(String(b.propertyId)) ? rankMap.get(String(b.propertyId)) : 999999);
+                                return rankA - rankB;
+                            });
+                        }
+                    }
+                } catch (err) {
+                    console.error('[web/properties] category custom order error:', err);
+                }
+            }
+        }
 
         const totalPages = Math.ceil(total / pagination.limit) || 1;
 
@@ -306,6 +349,10 @@ exports.getBySlug = async (req, res) => {
                         about: true,
                         createdAt: true,
                     },
+                },
+                seasonalPrices: {
+                    where: { isActive: true },
+                    orderBy: { startDate: 'asc' },
                 },
                 reviews: {
                     where: { isApproved: true },

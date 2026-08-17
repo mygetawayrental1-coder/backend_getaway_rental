@@ -15,6 +15,8 @@
 const {
     calculateNights,
     calculateTotalAmount,
+    calculateStayQuote,
+    parseSeasonalPricesInput,
     validateDateRange,
     hasConflicts,
     conflictMessage,
@@ -73,6 +75,59 @@ describe('calculateTotalAmount()', () => {
         const cout = new Date(Date.UTC(2026, 7, 10));
         // weekendRate=0 → treated as no weekend rate
         expect(calculateTotalAmount(cin, cout, 100, 0)).toBe(300);
+    });
+});
+
+describe('calculateStayQuote() with seasons', () => {
+    it('uses seasonal nightly rate for nights in range', () => {
+        const cin = new Date(Date.UTC(2026, 7, 1));
+        const cout = new Date(Date.UTC(2026, 7, 3));
+        const quote = calculateStayQuote({
+            checkin: cin,
+            checkout: cout,
+            nightlyRate: 100,
+            seasons: [
+                {
+                    name: 'Peak',
+                    startDate: '2026-08-01',
+                    endDate: '2026-08-31',
+                    nightlyRate: 200,
+                    isActive: true,
+                },
+            ],
+        });
+        expect(quote.nights).toBe(2);
+        expect(quote.subtotal).toBe(400);
+        expect(quote.nightlyBreakdown.every((n) => n.seasonName === 'Peak')).toBe(true);
+    });
+
+    it('falls back to base rate outside seasons', () => {
+        const cin = new Date(Date.UTC(2026, 6, 1));
+        const cout = new Date(Date.UTC(2026, 6, 3));
+        const quote = calculateStayQuote({
+            checkin: cin,
+            checkout: cout,
+            nightlyRate: 100,
+            seasons: [
+                {
+                    name: 'Peak',
+                    startDate: '2026-08-01',
+                    endDate: '2026-08-31',
+                    nightlyRate: 200,
+                },
+            ],
+        });
+        expect(quote.subtotal).toBe(200);
+    });
+});
+
+describe('parseSeasonalPricesInput()', () => {
+    it('rejects overlapping seasons', () => {
+        const result = parseSeasonalPricesInput([
+            { name: 'A', startDate: '2026-08-01', endDate: '2026-08-15', nightlyRate: 100 },
+            { name: 'B', startDate: '2026-08-10', endDate: '2026-08-20', nightlyRate: 150 },
+        ]);
+        expect(result.error).toMatch(/overlap/i);
     });
 });
 

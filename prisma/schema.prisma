@@ -148,6 +148,7 @@ model Property {
   status     String  @default("Active") // Active | Inactive | Pending
   isFeatured Boolean @default(false)
   isNew      Boolean @default(true)
+  sortOrder  Int     @default(0)
 
   // iCal calendar sync (Airbnb, VRBO, etc.)
   icalUrls String? // JSON: { airbnb: url, vrbo: url, ... }
@@ -180,6 +181,7 @@ model Property {
   wishlists    Wishlist[]
   availability PropertyAvailability[]
   conversations Conversation[]
+  seasonalPrices SeasonalPrice[]
 
   @@index([ownerId])
   @@index([status])
@@ -187,7 +189,26 @@ model Property {
   @@index([location])
   @@index([locationId])
   @@index([isFeatured])
+  @@index([sortOrder])
   @@index([slug])
+}
+
+/// Date-range rate overrides (peak / off-season). Base rate stays on Property.nightlyRate.
+model SeasonalPrice {
+  id          String   @id @default(cuid())
+  propertyId  String
+  property    Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  name        String? // e.g. "Peak summer"
+  startDate   DateTime
+  endDate     DateTime
+  nightlyRate Int
+  weekendRate Int?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([propertyId, startDate, endDate])
+  @@index([propertyId, isActive])
 }
 
 // Owner-defined custom availability blocks (beyond bookings)
@@ -984,4 +1005,27 @@ model PageHeroConfig {
 
   @@index([useCmsValues])
   @@index([sortOrder])
+}
+
+// =============================================================
+// ███████╗██╗████████╗███████╗    ███████╗███████╗████████╗████████╗██╗███╗   ██╗ ██████╗ ███████╗
+// ██╔════╝██║╚══██╔══╝██╔════╝    ██╔════╝██╔════╝╚══██╔══╝╚══██╔══╝██║████╗  ██║██╔════╝ ██╔════╝
+// ███████╗██║   ██║   █████╗      ███████╗█████╗     ██║      ██║   ██║██╔██╗ ██║██║  ███╗███████╗
+// ╚════██║██║   ██║   ██╔══╝      ╚════██║██╔══╝     ██║      ██║   ██║██║╚██╗██║██║   ██║╚════██║
+// ███████║██║   ██║   ███████╗    ███████║███████╗   ██║      ██║   ██║██║ ╚████║╚██████╔╝███████║
+// ╚══════╝╚═╝   ╚═╝   ╚══════╝    ╚══════╝╚══════╝   ╚═╝      ╚═╝   ╚═╝╚═╝  ╚═══╝ ╚═════╝ ╚══════╝
+//
+// Admin-editable global site configuration (contact details, social links, etc.)
+// Stored as key/value JSON rows. Currently used key: "contact"
+// =============================================================
+
+/// Global site settings — key/value JSON store (admin only write, public read).
+/// Key "contact" stores: { phone, phoneTel, emails[], social: { facebook, twitter, youtube, instagram } }
+model SiteSettings {
+  id        String   @id @default(cuid())
+  key       String   @unique // e.g. "contact"
+  value     String   @db.Text // JSON blob
+  updatedAt DateTime @updatedAt
+
+  @@index([key])
 }

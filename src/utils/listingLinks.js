@@ -117,7 +117,13 @@ function buildPlanFeatureBullets(plan) {
   if (plan.maxPhotos == null) bullets.push('Unlimited Photos');
   else bullets.push(`${plan.maxPhotos} Photos`);
 
-  bullets.push('Unlimited text description');
+  if (plan.maxDescriptionLength == null) {
+    if (plan.unlimitedDescription !== false || plan.unlimitedTextDescription) {
+      bullets.push('Unlimited text description');
+    }
+  } else if (plan.maxDescriptionLength > 0) {
+    bullets.push(`${plan.maxDescriptionLength} words description`);
+  }
 
   if (plan.maxCalendarSyncs == null) bullets.push('Multiple Calendar Sync');
   else if (plan.maxCalendarSyncs === 1) bullets.push('1 Calendar Sync');

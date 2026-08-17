@@ -8,7 +8,7 @@ const icalService = require('../services/ical.service');
 const {
     utcStartOfDay,
     calculateNights,
-    calculateTotalAmount,
+    calculateStayQuote,
     validateDateRange,
     findStayConflicts,
     hasConflicts,
@@ -40,6 +40,10 @@ async function resolveProperty(propertyId) {
         include: {
             owner: {
                 select: { id: true, email: true, firstName: true, lastName: true },
+            },
+            seasonalPrices: {
+                where: { isActive: true },
+                orderBy: { startDate: 'asc' },
             },
         },
     });
@@ -189,15 +193,15 @@ const checkAvailability = async (req, res) => {
 
         const stay = await findStayConflicts(property.id, checkinDate, checkoutDate);
         const available = !hasConflicts(stay);
-        const nights = calculateNights(checkinDate, checkoutDate);
         const nightlyRate = property.nightlyRate || property.minRate || 0;
         const weekendRate = property.weekendRate || null;
-        const totalAmount = calculateTotalAmount(
-            checkinDate,
-            checkoutDate,
+        const quote = calculateStayQuote({
+            checkin: checkinDate,
+            checkout: checkoutDate,
             nightlyRate,
             weekendRate,
-        );
+            seasons: property.seasonalPrices || [],
+        });
 
         res.json({
             success: true,
@@ -214,10 +218,11 @@ const checkAvailability = async (req, res) => {
                 propertyName: property.propertyName,
                 checkin: checkinDate,
                 checkout: checkoutDate,
-                nights,
+                nights: quote.nights,
                 nightlyRate,
                 weekendRate,
-                totalAmount,
+                totalAmount: quote.subtotal,
+                nightlyBreakdown: quote.nightlyBreakdown,
             },
         });
     } catch (error) {
@@ -273,15 +278,17 @@ const createBooking = async (req, res) => {
             });
         }
 
-        const nights = calculateNights(checkinDate, checkoutDate);
         const nightlyRate = property.nightlyRate || property.minRate || 0;
         const weekendRate = property.weekendRate || null;
-        const totalAmount = calculateTotalAmount(
-            checkinDate,
-            checkoutDate,
+        const quote = calculateStayQuote({
+            checkin: checkinDate,
+            checkout: checkoutDate,
             nightlyRate,
             weekendRate,
-        );
+            seasons: property.seasonalPrices || [],
+        });
+        const nights = quote.nights;
+        const totalAmount = quote.subtotal;
 
         const guestClerkId = req.user?.id || null;
 

@@ -17,6 +17,23 @@ const SECTIONS = [
     'links',
 ];
 
+/** Meta row — JSON array of removed listing standard field ids (e.g. s14, s14b, s15). */
+const HIDDEN_STD_META_NAME = 'std_hidden_fields';
+
+function parseHiddenStandardIds(allFields) {
+    const meta = (allFields || []).find((f) => f.name === HIDDEN_STD_META_NAME);
+    if (!meta?.options) return [];
+    try {
+        const parsed = JSON.parse(meta.options);
+        return Array.isArray(parsed) ? parsed.map(String) : [];
+    } catch {
+        return String(meta.options)
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean);
+    }
+}
+
 
 function validateFieldName(name) {
     // Alphanumeric and underscores only, must start with a letter
@@ -50,6 +67,36 @@ const getDynamicFields = async (req, res) => {
     } catch (error) {
         console.error('Get active dynamic fields error:', error);
         res.status(500).json({ success: false, message: 'Failed to fetch dynamic fields.' });
+    }
+};
+
+/**
+ * GET /dynamic-fields/listing-config
+ * Public: Active custom fields + which listing standard controls are hidden by admin.
+ * Standard ids match Admin Dynamic Fields (e.g. s14 nightly, s14b weekend toggle, s15 seasons).
+ */
+const getListingFormConfig = async (req, res) => {
+    try {
+        const all = await prisma.dynamicField.findMany({
+            orderBy: { createdAt: 'asc' },
+        });
+        const fields = all.filter(
+            (f) => f.isActive !== false && f.name !== HIDDEN_STD_META_NAME,
+        );
+        const hiddenStandards = parseHiddenStandardIds(all);
+        res.json({
+            success: true,
+            data: {
+                fields,
+                hiddenStandards,
+            },
+        });
+    } catch (error) {
+        console.error('Get listing form config error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to fetch listing form config.',
+        });
     }
 };
 
@@ -244,6 +291,7 @@ const deleteDynamicField = async (req, res) => {
 
 module.exports = {
     getDynamicFields,
+    getListingFormConfig,
     adminGetDynamicFields,
     createDynamicField,
     updateDynamicField,

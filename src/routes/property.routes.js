@@ -19,6 +19,7 @@ router.post('/fetch-property-by-email', authenticate, requireRole(ROLES.OWNER, R
 router.get('/fetch-property-by-email/:email', authenticate, requireRole(ROLES.OWNER, ROLES.ADMIN), propertyController.getPropertiesByEmail);
 
 // ——— Parameterized routes ———
+router.patch('/:id/toggle-featured', authenticate, requireRole(ROLES.ADMIN), propertyController.toggleFeatured);
 router.get('/:id/availability', propertyController.getAvailability);
 router.get('/:id', optionalAuth, propertyController.getPropertyById);
 router.put('/:id', authenticate, requireRole(ROLES.OWNER, ROLES.ADMIN), uploadMultiple, handleUploadError, propertyController.updateProperty);

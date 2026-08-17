@@ -124,7 +124,31 @@ exports.getLocationProperties = async (req, res) => {
             prisma.property.count({ where }),
         ]);
 
-        const properties = formatPropertiesResponse(rows);
+        let properties = formatPropertiesResponse(rows);
+
+        if (!sort || sort === 'newest') {
+            const locKey = String(location.slug || location.name || '').trim().toLowerCase();
+            if (locKey) {
+                try {
+                    const row = await prisma.siteSettings.findUnique({ where: { key: 'destination_order' } });
+                    if (row) {
+                        const orderData = JSON.parse(row.value);
+                        const rankingIds = orderData[locKey] || orderData[locKey.replace(/\s+/g, '-')];
+                        if (Array.isArray(rankingIds) && rankingIds.length) {
+                            const rankMap = new Map(rankingIds.map((id, index) => [String(id), index]));
+                            properties = [...properties].sort((a, b) => {
+                                const rankA = rankMap.has(String(a.id)) ? rankMap.get(String(a.id)) : (rankMap.has(String(a.propertyId)) ? rankMap.get(String(a.propertyId)) : 999999);
+                                const rankB = rankMap.has(String(b.id)) ? rankMap.get(String(b.id)) : (rankMap.has(String(b.propertyId)) ? rankMap.get(String(b.propertyId)) : 999999);
+                                return rankA - rankB;
+                            });
+                        }
+                    }
+                } catch (err) {
+                    console.error('[web/locations] destination custom order error:', err);
+                }
+            }
+        }
+
         const totalPages = Math.ceil(total / pagination.limit) || 1;
 
         res.json({

@@ -717,6 +717,75 @@ const sendBroadcastEmail = async (emailAddresses, subject, messageBody) => {
   });
 };
 
+const sendListingStatusChangeEmail = async ({
+  to,
+  ownerName,
+  propertyName,
+  status,
+  reason,
+}) => {
+  const isHidden = status === 'Inactive' || status === 'Pending';
+  const statusLabel = status === 'Inactive' ? 'Hidden / Deactivated' : status === 'Pending' ? 'Under Review' : 'Live / Active';
+  const subject = isHidden
+    ? `Action Required: Your listing "${propertyName}" has been ${statusLabel}`
+    : `Good News: Your listing "${propertyName}" is now Live!`;
+
+  const html = `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e5e7eb; border-radius: 12px; background: #ffffff;">
+      <div style="text-align: center; margin-bottom: 24px;">
+        <h2 style="color: #111827; margin: 0 0 8px;">Listing Status Update</h2>
+        <p style="color: #6b7280; font-size: 14px; margin: 0;">MyGetawayRental Administration</p>
+      </div>
+
+      <p style="color: #374151; font-size: 15px;">Hello <strong>${ownerName || 'Host'}</strong>,</p>
+
+      <p style="color: #374151; font-size: 15px; line-height: 1.5;">
+        This is an official notice regarding your listing <strong>"${propertyName}"</strong> on MyGetawayRental.
+      </p>
+
+      <div style="background: ${isHidden ? '#fef2f2' : '#f0fdf4'}; border: 1px solid ${isHidden ? '#fecaca' : '#bbf7d0'}; border-radius: 8px; padding: 16px; margin: 20px 0;">
+        <p style="margin: 0 0 8px; font-weight: 600; color: ${isHidden ? '#991b1b' : '#166534'}; font-size: 14px;">
+          Current Status: ${statusLabel}
+        </p>
+        ${reason ? `
+        <p style="margin: 0; color: #4b5563; font-size: 14px; line-height: 1.5;">
+          <strong>Admin Reason / Note:</strong><br/>
+          ${reason}
+        </p>
+        ` : ''}
+      </div>
+
+      ${isHidden ? `
+      <p style="color: #374151; font-size: 14px; line-height: 1.5;">
+        While your listing is inactive, it will not appear in search results, category pages, or map views. Please log into your owner dashboard, address the feedback above, and update your listing.
+      </p>
+      ` : `
+      <p style="color: #374151; font-size: 14px; line-height: 1.5;">
+        Your listing is live and visible to travelers worldwide across search, maps, and recommended homes.
+      </p>
+      `}
+
+      <div style="text-align: center; margin: 30px 0;">
+        <a href="https://mygetawayrental.com/dashboard/listings" style="background: #ea580c; color: #ffffff; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px; display: inline-block;">
+          Open Owner Dashboard
+        </a>
+      </div>
+
+      <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 24px 0;" />
+      <p style="color: #9ca3af; font-size: 12px; text-align: center; margin: 0;">
+        If you have any questions, you can reply directly to this email or submit a ticket from your dashboard.
+      </p>
+    </div>
+  `;
+
+  return sendEmail({
+    to,
+    subject,
+    html,
+    text: `Listing Status Update for ${propertyName}: ${statusLabel}. Reason: ${reason || 'No specific reason provided.'}`,
+  });
+};
+
 module.exports = {
   sendEmail,
   sendVerificationEmail,
@@ -735,4 +804,6 @@ module.exports = {
   sendPaymentConfirmationEmail,
   sendInvoiceEmail,
   sendBroadcastEmail,
+  sendListingStatusChangeEmail,
 };
+

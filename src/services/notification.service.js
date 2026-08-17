@@ -18,6 +18,7 @@ const NOTIFICATION_TYPES = {
     SUPPORT_TICKET_NEW: 'support_ticket_new',
     SUPPORT_TICKET_REPLY: 'support_ticket_reply',
     SUPPORT_TICKET_STATUS: 'support_ticket_status',
+    PROPERTY_STATUS_CHANGED: 'property_status_changed',
 };
 
 /** Human-readable title + body for known notification types. */
@@ -116,14 +117,19 @@ function buildNotificationContent(type, vars = {}) {
         case NOTIFICATION_TYPES.SUPPORT_TICKET_STATUS:
             return {
                 title: 'Ticket status updated',
-                body: vars.status
-                    ? `Your ticket was marked ${vars.status}`
-                    : 'Your support ticket status was updated',
+                body: `Ticket #${vars.ticketId || ''} status: ${vars.status || ''}`,
+            };
+        case NOTIFICATION_TYPES.PROPERTY_STATUS_CHANGED:
+            return {
+                title: vars.status === 'Inactive' ? 'Listing Deactivated / Hidden' : vars.status === 'Active' ? 'Listing Live' : 'Listing Status Updated',
+                body: vars.reason
+                    ? `Listing "${propertyName}" is now ${vars.status}: ${vars.reason}`
+                    : `Listing "${propertyName}" status updated to ${vars.status}`,
             };
         default:
             return {
-                title: vars.title || 'Notification',
-                body: vars.body || '',
+                title: 'New notification',
+                body: 'You have a new update',
             };
     }
 }

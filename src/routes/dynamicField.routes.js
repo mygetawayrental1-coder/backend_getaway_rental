@@ -4,8 +4,9 @@ const dynamicFieldController = require('../controllers/dynamicField.controller')
 const { authenticate } = require('../middleware/auth');
 const { requireRole, ROLES } = require('../middleware/roles');
 
-// Public route to fetch active fields
+// Public routes
 router.get('/', dynamicFieldController.getDynamicFields);
+router.get('/listing-config', dynamicFieldController.getListingFormConfig);
 
 // Admin-only routes to manage fields
 router.get('/admin', authenticate, requireRole(ROLES.ADMIN), dynamicFieldController.adminGetDynamicFields);
