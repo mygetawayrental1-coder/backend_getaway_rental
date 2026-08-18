@@ -1,8 +1,8 @@
 const express = require('express');
 const router = express.Router();
-const ctrl = require('../../controllers/siteSettings.controller');
-const { authenticate } = require('../../middleware/auth');
-const { isAdmin } = require('../../middleware/roles');
+const ctrl = require('../controllers/siteSettings.controller');
+const { authenticate } = require('../middleware/auth');
+const { isAdmin } = require('../middleware/roles');
 
 // Public — website + flutter app
 router.get('/contact', ctrl.getContact);
