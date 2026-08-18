@@ -144,6 +144,16 @@ const updateDestinationOrder = async (req, res) => {
             create: { key: 'destination_order', value: JSON.stringify(current) },
         });
 
+        const { triggerWebsiteRevalidation } = require('../utils/revalidate');
+        triggerWebsiteRevalidation({ tags: ['locations', 'homepage', 'featured-properties'], paths: ['/', '/search-rental-full-map'] });
+
+        return res.json({ success: true, data: current, message: 'Destination property order saved.' });
+    } catch (err) {
+        console.error('[SiteSettings] updateDestinationOrder error:', err);
+        return res.status(500).json({ success: false, message: 'Failed to save destination order.' });
+    }
+};
+
 /**
  * GET /api/web/site-settings/category-order (public)
  * Returns map of { [rentalTypeLower]: [propertyId1, propertyId2, ...] }
