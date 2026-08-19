@@ -63,7 +63,7 @@ app.use(cors({
     credentials: true,
 }));
 
-// Global rate limiter — 500 requests / IP / 15 min
+// Global rate limiter — 2000 requests / IP / 15 min (public GETs skipped)
 app.use(globalLimiter);
 
 // Clerk webhooks require raw body for signature verification (must be before express.json)

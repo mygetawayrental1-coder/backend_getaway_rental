@@ -617,10 +617,17 @@ const getAllProperties = async (req, res) => {
     try {
         const { page, limit, status, search, location } = req.query;
         const isAdmin = req.user?.role === 'ADMIN';
+        const rawLimit = parseInt(limit, 10);
+        if (!Number.isNaN(rawLimit) && rawLimit > 100 && !isAdmin) {
+            return res.status(403).json({
+                success: false,
+                message: 'Admin authentication required for the full property catalog.',
+            });
+        }
+
         const pagination = getPagination(page, limit, { maxLimit: isAdmin ? 2000 : 100 });
 
         const where = {};
-        if (status) where.status = status;
         if (location) where.location = { contains: location };
         if (search) {
             where.OR = [
@@ -630,13 +637,15 @@ const getAllProperties = async (req, res) => {
             ];
         }
 
-        // Owners see their own listings; admins see all; guests/USER see public Active catalog.
+        // Owners see their own listings; admins see all (optional status filter);
+        // guests/USER always see Active only — ignore status query to prevent leakage.
         if (req.user?.role === 'OWNER') {
             where.ownerId = req.user.id;
-        } else if (req.user?.role === 'ADMIN') {
-            // no owner filter
+            if (status) where.status = status;
+        } else if (isAdmin) {
+            if (status) where.status = status;
         } else {
-            if (!status) where.status = 'Active';
+            where.status = 'Active';
         }
 
         const [properties, total] = await Promise.all([

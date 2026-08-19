@@ -3,12 +3,13 @@ const rateLimit = require('express-rate-limit');
 /**
  * Build a rate limiter with a consistent JSON error shape.
  */
-function makeLimiter({ windowMs, max, message }) {
+function makeLimiter({ windowMs, max, message, skip }) {
     return rateLimit({
         windowMs,
         max,
         standardHeaders: true,  // Return rate limit info in `RateLimit-*` headers
         legacyHeaders: false,   // Disable `X-RateLimit-*` headers
+        skip,
         handler: (req, res) => {
             res.status(429).json({
                 success: false,
@@ -19,13 +20,30 @@ function makeLimiter({ windowMs, max, message }) {
 }
 
 /**
+ * Public read paths used heavily by Next.js SSR and shared NAT IPs.
+ * Skipping these avoids false 429s without weakening write/auth protections.
+ */
+function isPublicReadGet(req) {
+    if (req.method !== 'GET') return false;
+    const path = req.path || '';
+    return (
+        path === '/' ||
+        path.startsWith('/api/web') ||
+        path.startsWith('/uploads') ||
+        path === '/health' ||
+        path === '/healthz'
+    );
+}
+
+/**
  * Global limiter — applied to every request.
- * 500 requests per IP per 15 minutes.
+ * 2000 requests per IP per 15 minutes (public GETs skipped).
  */
 const globalLimiter = makeLimiter({
     windowMs: 15 * 60 * 1000,
-    max: 500,
+    max: 2000,
     message: 'Too many requests from this IP, please try again after 15 minutes.',
+    skip: isPublicReadGet,
 });
 
 /**

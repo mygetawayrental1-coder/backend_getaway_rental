@@ -4,7 +4,7 @@
   "description": "Backend API for MyGatewayRental - Property rental platform",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
+    "start": "npx prisma migrate deploy && node server.js",
     "dev": "nodemon server.js",
     "postinstall": "prisma generate",
     "db:push": "prisma db push",
