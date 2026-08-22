@@ -3,116 +3,176 @@ const icalGenerator = require('ical-generator').default;
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const crypto = require('crypto');
+const { utcStartOfDay } = require('../utils/stayAvailability');
+
+/**
+ * Map an iCal start/end to overnight stay boundaries (UTC midnight dates).
+ * Industry rule: occupy nights [checkIn, checkOut) — checkout day is free
+ * for the next guest's check-in (same-day turnover).
+ *
+ * Timed ends like "Mar 5 11:00" become checkOut = Mar 5 00:00 UTC so Mar 5
+ * is NOT a blocked night and does not conflict with a Mar 5 check-in.
+ */
+function toStayDateUTC(value) {
+    if (!value) return null;
+    const d = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(d.getTime())) return null;
+
+    // VALUE=DATE (all-day): node-ical often sets dateOnly / uses UTC midnight.
+    if (value.dateOnly === true) {
+        return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+    }
+
+    // Timed events: use the civil calendar date from the parsed Date
+    // (local components as interpreted by node-ical), stored as UTC midnight.
+    return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+}
+
+function normalizeStayBounds(rawStart, rawEnd) {
+    let checkIn = toStayDateUTC(rawStart);
+    if (!checkIn) return null;
+
+    let checkOut = toStayDateUTC(rawEnd);
+    if (!checkOut) {
+        checkOut = new Date(checkIn);
+        checkOut.setUTCDate(checkOut.getUTCDate() + 1);
+    }
+
+    // Guard: end must be after start (at least 1 night).
+    if (checkOut <= checkIn) {
+        checkOut = new Date(checkIn);
+        checkOut.setUTCDate(checkOut.getUTCDate() + 1);
+    }
+
+    return { checkIn, checkOut };
+}
 
 /**
  * Service to handle importing and exporting of iCal (.ics) files for properties.
  */
 class IcalService {
-
     /**
      * Import a remote .ics URL into the database for a specific property.
-     * @param {String} propertyId - The `id` (or `propertyId`) from the Property table.
-     * @param {String} source - Source platform name (e.g., 'airbnb', 'booking.com').
-     * @param {String} url - The .ics URL.
-     * @returns {Promise<Number>} - The number of new events imported.
+     * Upserts by UID and removes events for this source that disappeared from the feed.
+     * @returns {Promise<{ imported: number, updated: number, removed: number }>}
      */
     async importFromUrl(propertyId, source, url) {
-        let importedCount = 0;
+        const stats = { imported: 0, updated: 0, removed: 0 };
         try {
-            // Fetch and parse the remote iCal URL
             const events = await ical.async.fromURL(url);
+            const seenUids = new Set();
+            const sourceKey = String(source || 'external');
 
             for (const key in events) {
                 const event = events[key];
-
-                // We only care about VEVENT type
                 if (event.type !== 'VEVENT') continue;
 
-                const uid = event.uid || crypto.randomUUID();
+                const uid = String(event.uid || crypto.randomUUID());
+                const bounds = normalizeStayBounds(event.start, event.end);
+                if (!bounds) continue;
 
-                // Duplicate check — same UID may exist on another property
+                seenUids.add(uid);
+
+                const startStr = bounds.checkIn.toISOString().slice(0, 10).replace(/-/g, '');
+                const endStr = bounds.checkOut.toISOString().slice(0, 10).replace(/-/g, '');
+                const summary = event.summary || 'Imported Booking';
+                const icsContent =
+                    `BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\n` +
+                    `UID:${uid}\r\nDTSTART;VALUE=DATE:${startStr}\r\nDTEND;VALUE=DATE:${endStr}\r\n` +
+                    `SUMMARY:${summary}\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n`;
+
                 const existing = await prisma.icalEvent.findUnique({
                     where: {
-                        propertyId_uid: {
-                            propertyId,
-                            uid,
-                        },
+                        propertyId_uid: { propertyId, uid },
                     },
                 });
 
                 if (existing) {
-                    continue; // Skip already imported for this property
+                    await prisma.icalEvent.update({
+                        where: { id: existing.id },
+                        data: {
+                            dtStart: bounds.checkIn,
+                            dtEnd: bounds.checkOut,
+                            icsContent,
+                            source: sourceKey,
+                            summary: typeof summary === 'string' ? summary.slice(0, 500) : null,
+                        },
+                    });
+                    stats.updated += 1;
+                } else {
+                    await prisma.icalEvent.create({
+                        data: {
+                            uid,
+                            propertyId,
+                            dtStart: bounds.checkIn,
+                            dtEnd: bounds.checkOut,
+                            icsContent,
+                            source: sourceKey,
+                            summary: typeof summary === 'string' ? summary.slice(0, 500) : null,
+                        },
+                    });
+                    stats.imported += 1;
                 }
+            }
 
-                // Parse dates. node-ical creates native Date objects for start/end
-                const dtStart = event.start;
-                let dtEnd = event.end;
-
-                if (!dtStart) {
-                    continue; // Skip invalid events without start dates
-                }
-
-                // If it's an all day event and has no explicit end, assume 1 day
-                if (!dtEnd) {
-                    dtEnd = new Date(dtStart.getTime());
-                    dtEnd.setDate(dtEnd.getDate() + 1);
-                }
-
-                // Re-build a simple raw ICS string for the event (optional, matching Java backend pattern)
-                const startStr = dtStart.toISOString().replace(/[-:]/g, '').substring(0, 15) + 'Z';
-                const endStr = dtEnd.toISOString().replace(/[-:]/g, '').substring(0, 15) + 'Z';
-                const icsContent = `BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:${uid}\r\nDTSTART:${startStr}\r\nDTEND:${endStr}\r\nSUMMARY:${event.summary || 'Imported Booking'}\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n`;
-
-                await prisma.icalEvent.create({
-                    data: {
-                        uid: uid,
-                        propertyId: propertyId, // Note: Make sure this maps to the correct internal PK or unique ID
-                        dtStart: dtStart,
-                        dtEnd: dtEnd,
-                        icsContent: icsContent,
-                        source: source
-                    }
+            // Drop cancelled/removed events for this property+source (not our internal bookings).
+            if (sourceKey !== 'mygatewayrental' && seenUids.size >= 0) {
+                const stale = await prisma.icalEvent.findMany({
+                    where: {
+                        propertyId,
+                        source: sourceKey,
+                        ...(seenUids.size
+                            ? { uid: { notIn: Array.from(seenUids) } }
+                            : {}),
+                    },
+                    select: { id: true },
                 });
-
-                importedCount++;
+                // If feed returned zero VEVENTs, don't wipe everything (transient empty parse).
+                if (seenUids.size > 0 && stale.length) {
+                    await prisma.icalEvent.deleteMany({
+                        where: { id: { in: stale.map((r) => r.id) } },
+                    });
+                    stats.removed = stale.length;
+                }
             }
         } catch (error) {
             console.error(`[iCal Import] Failed to import from ${url}:`, error.message);
             throw error;
         }
 
-        return importedCount;
+        return stats;
     }
 
     /**
-     * Export all booked events for a property as an ICS string.
-     * @param {String} propertyId - The ID of the property.
-     * @returns {Promise<String>} - The combined VCALENDAR ICS string.
+     * Export all booked events for a property as an ICS string (date-only VALUE=DATE).
      */
     async exportForProperty(propertyId) {
-        // Fetch all events for this property
         const events = await prisma.icalEvent.findMany({
-            where: { propertyId: propertyId }
+            where: { propertyId },
         });
 
-        // Initialize ical-generator calendar
-        const calendar = icalGenerator({ name: process.env.SITE_NAME || 'MyGatewayRental Calendar' });
+        const calendar = icalGenerator({
+            name: process.env.SITE_NAME || 'MyGatewayRental Calendar',
+        });
         calendar.prodId({
             company: 'MyGatewayRental',
             product: 'BookingCalendar',
-            language: 'EN'
+            language: 'EN',
         });
 
         for (const e of events) {
-            // Check if we should use existing raw ICS or build new
-            // For simplicity and correctness with ical-generator, we'll build new events natively
+            const start = utcStartOfDay(e.dtStart) || e.dtStart;
+            const end = utcStartOfDay(e.dtEnd) || e.dtEnd;
             calendar.createEvent({
                 id: e.uid,
-                start: e.dtStart,
-                end: e.dtEnd,
-                summary: e.source === 'mygatewayrental' ? 'Direct Booking - MyGatewayRental' : 'Imported Booking',
+                start,
+                end,
+                allDay: true,
+                summary:
+                    e.source === 'mygatewayrental'
+                        ? 'Direct Booking - MyGatewayRental'
+                        : 'Imported Booking',
                 description: `Source: ${e.source}`,
-                // if it's an internal booking, we can add more details from the DB if necessary
             });
         }
 
@@ -120,46 +180,54 @@ class IcalService {
     }
 
     /**
-     * Get a simple array of booked date ranges for the frontend calendar picker.
-     * @param {String} propertyId 
-     * @returns {Promise<Array>}
+     * Booked ranges for UI — checkout is exclusive (available for next check-in).
      */
     async getBookedDatesForProperty(propertyId) {
         const events = await prisma.icalEvent.findMany({
-            where: { propertyId: propertyId },
-            select: { dtStart: true, dtEnd: true }
+            where: { propertyId },
+            select: { dtStart: true, dtEnd: true },
         });
 
-        return events.map(e => ({
-            checkin: e.dtStart.toISOString().split('T')[0],
-            checkout: e.dtEnd.toISOString().split('T')[0]
-        }));
+        return events.map((e) => {
+            const checkIn = utcStartOfDay(e.dtStart) || e.dtStart;
+            const checkOut = utcStartOfDay(e.dtEnd) || e.dtEnd;
+            return {
+                checkin: checkIn.toISOString().split('T')[0],
+                checkout: checkOut.toISOString().split('T')[0],
+            };
+        });
     }
 
     /**
-     * Internal bridging method: Creates an iCal event when a direct Inquiry/Booking is confirmed.
-     * @param {Object} inquiry - The inquiry/booking object.
+     * Internal: store overnight bounds as UTC midnights (same as import).
      */
     async createEventForInternalBooking(inquiry) {
         if (!inquiry.checkin || !inquiry.checkout || !inquiry.propertyId) {
-            throw new Error("Booking must contain checkin, checkout, and propertyId.");
+            throw new Error('Booking must contain checkin, checkout, and propertyId.');
+        }
+
+        const checkIn = utcStartOfDay(inquiry.checkin);
+        const checkOut = utcStartOfDay(inquiry.checkout);
+        if (!checkIn || !checkOut || checkOut <= checkIn) {
+            throw new Error('Invalid checkin/checkout for iCal event.');
         }
 
         const uid = inquiry.id + '-' + crypto.randomUUID().substring(0, 8);
-        const dtStart = new Date(inquiry.checkin);
-        const dtEnd = new Date(inquiry.checkout);
 
         await prisma.icalEvent.create({
             data: {
-                uid: uid,
+                uid,
                 inquiryId: inquiry.id,
                 propertyId: inquiry.propertyId,
-                dtStart: dtStart,
-                dtEnd: dtEnd,
-                source: 'mygatewayrental'
-            }
+                dtStart: checkIn,
+                dtEnd: checkOut,
+                source: 'mygatewayrental',
+                summary: 'Direct Booking - MyGatewayRental',
+            },
         });
     }
 }
 
 module.exports = new IcalService();
+module.exports.normalizeStayBounds = normalizeStayBounds;
+module.exports.toStayDateUTC = toStayDateUTC;

@@ -233,7 +233,7 @@ async function findStayConflicts(
         };
     }
 
-    const [bookings, acceptedRequests, ownerBlocks, icalEvents] = await Promise.all([
+    const [bookings, acceptedRequests, ownerBlocks, rawIcal] = await Promise.all([
         db.booking.findMany({
             where: {
                 propertyId,
@@ -295,6 +295,20 @@ async function findStayConflicts(
             },
         }),
     ]);
+
+    // Overnight model: compare UTC calendar dates only so timed iCal ends
+    // (e.g. Mar 5 11:00) do not block a Mar 5 check-in.
+    const icalEvents = rawIcal
+        .map((e) => ({
+            ...e,
+            dtStart: utcStartOfDay(e.dtStart) || e.dtStart,
+            dtEnd: utcStartOfDay(e.dtEnd) || e.dtEnd,
+        }))
+        .filter(
+            (e) =>
+                e.dtStart < checkoutDate &&
+                e.dtEnd > checkinDate,
+        );
 
     return {
         checkinDate,
@@ -374,16 +388,22 @@ async function propertyIdsBlockedForRange(checkIn, checkOut) {
                 dtStart: { lt: end },
                 dtEnd: { gt: start },
             },
-            select: { propertyId: true },
+            select: { propertyId: true, dtStart: true, dtEnd: true },
         }),
     ]);
+
+    const icalBlocking = ical.filter((e) => {
+        const s = utcStartOfDay(e.dtStart);
+        const en = utcStartOfDay(e.dtEnd);
+        return s && en && s < end && en > start;
+    });
 
     return [
         ...new Set([
             ...bookings.map((b) => b.propertyId),
             ...accepted.map((r) => r.propertyId),
             ...ownerBlocks.map((b) => b.propertyId),
-            ...ical.map((e) => e.propertyId),
+            ...icalBlocking.map((e) => e.propertyId),
         ]),
     ];
 }

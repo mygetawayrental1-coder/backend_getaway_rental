@@ -27,13 +27,18 @@ exports.importIcs = async (req, res) => {
             });
         }
 
-        const importedCount = await icalService.importFromUrl(propertyId, source, sourceUrl);
+        const result = await icalService.importFromUrl(propertyId, source, sourceUrl);
+        const imported =
+            typeof result === 'number'
+                ? result
+                : (result?.imported || 0) + (result?.updated || 0);
 
         return res.status(200).json({
             success: true,
             status: 'ok',
-            imported: importedCount,
-            message: `Successfully imported ${importedCount} events.`
+            imported,
+            details: typeof result === 'object' ? result : { imported: result },
+            message: `Calendar synced (${imported} events created/updated). Checkout days stay free for same-day check-in.`,
         });
     } catch (error) {
         console.error('Error in importIcs controller:', error);

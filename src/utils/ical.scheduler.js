@@ -32,9 +32,16 @@ const startIcalScheduler = () => {
                     if (!url) continue;
 
                     try {
-                        const importedCount = await icalService.importFromUrl(property.id, source, url);
-                        if (importedCount > 0) {
-                            console.log(`[iCal Scheduler] Imported ${importedCount} events for property ${property.id} from ${source}.`);
+                        const result = await icalService.importFromUrl(property.id, source, url);
+                        const n =
+                            typeof result === 'number'
+                                ? result
+                                : (result?.imported || 0) + (result?.updated || 0) + (result?.removed || 0);
+                        if (n > 0) {
+                            console.log(
+                                `[iCal Scheduler] Synced property ${property.id} from ${source}:`,
+                                result,
+                            );
                         }
                     } catch (error) {
                         console.error(`[iCal Scheduler] Failed to sync property ${property.id} from ${source}:`, error.message);

@@ -172,8 +172,8 @@ const getAvailability = async (req, res) => {
             blockedByOwner: ownerBlocks.map((row) => formatDateOnly(row.date)),
             blockedByBookings: stayBlocks,
             blockedByIcal: icalBlocks.map((b) => ({
-                checkin: b.dtStart,
-                checkout: b.dtEnd,
+                checkin: formatDateOnly(b.dtStart),
+                checkout: formatDateOnly(b.dtEnd),
             })),
         });
     } catch (error) {
