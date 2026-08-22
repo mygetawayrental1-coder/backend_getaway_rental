@@ -4,6 +4,7 @@ const { stringifyJsonField, parseJsonField, getPagination, formatPaginatedRespon
 const { validateCouponForPlan, applyCoupon } = require('./coupon.controller');
 const { reconcileUserRole } = require('../services/subscriptionAccess.service');
 const { serializePlanForApi } = require('../utils/listingLinks');
+const { isPayPalConfigured } = require('../config/paypal');
 
 function parseOptionalIntOrNull(value) {
     if (value === undefined) return undefined;
@@ -270,21 +271,49 @@ const subscribe = async (req, res) => {
         // Plans do not expire — keep a far-future endDate for DB schema only.
         const endDate = new Date('9999-12-31T00:00:00.000Z');
 
-        // Payment gateway not wired yet — activate immediately so owners can list properties.
-        const activateNow = process.env.SUBSCRIPTION_REQUIRE_PAYMENT !== 'true';
+        // Compute charge (plan specialPrice/price + coupon). Used to decide PayPal vs free activate.
+        let chargeAmount =
+            plan.specialPrice != null && plan.specialPrice > 0 ? plan.specialPrice : plan.price;
+        let appliedCoupon = null;
+        if (resolvedCouponId) {
+            appliedCoupon = await prisma.coupon.findUnique({ where: { id: resolvedCouponId } });
+            if (appliedCoupon && appliedCoupon.isActive) {
+                if (appliedCoupon.discountType === 'PERCENT') {
+                    chargeAmount = chargeAmount * (1 - appliedCoupon.discountValue / 100);
+                } else if (appliedCoupon.discountType === 'FIXED') {
+                    chargeAmount = Math.max(0, chargeAmount - appliedCoupon.discountValue);
+                }
+            }
+        }
+        chargeAmount = Math.round(chargeAmount * 100) / 100;
+
+        // Free (or $0 after coupon) → activate now.
+        // Paid + PayPal configured → PENDING until capture (admin manual assign still bypasses).
+        // Paid but PayPal missing → only activate if SUBSCRIPTION_REQUIRE_PAYMENT is not true.
+        const paypalReady = isPayPalConfigured();
+        const requirePayment =
+            chargeAmount > 0 &&
+            (paypalReady || process.env.SUBSCRIPTION_REQUIRE_PAYMENT === 'true');
+        const activateNow = !requirePayment;
         const subscriptionStatus = activateNow ? 'ACTIVE' : 'PENDING';
 
         const subscription = await prisma.$transaction(async (tx) => {
-            const existingSubscription = await tx.userSubscription.findFirst({
+            const existingActive = await tx.userSubscription.findFirst({
                 where: {
                     userId,
-                    status: { in: ['ACTIVE', 'PENDING'] },
+                    status: 'ACTIVE',
                 },
             });
 
-            if (existingSubscription) {
-                return { conflict: true, existingSubscription };
+            if (existingActive) {
+                return { conflict: true, existingSubscription: existingActive };
             }
+
+            // Replace abandoned pending checkouts so owners can retry payment.
+            await tx.userSubscription.updateMany({
+                where: { userId, status: 'PENDING' },
+                data: { status: 'CANCELLED' },
+            });
 
             if (resolvedCouponId) {
                 await applyCoupon(resolvedCouponId, tx);
@@ -334,7 +363,11 @@ const subscribe = async (req, res) => {
             success: true,
             message: activateNow
                 ? 'Subscription activated. You can add listings from your dashboard.'
-                : 'Subscription created. Please complete payment.',
+                : 'Subscription created. Complete PayPal payment to activate.',
+            needsPayment: !activateNow,
+            amount: chargeAmount,
+            currency: 'USD',
+            paypalConfigured: paypalReady,
             data: subscription,
         });
     } catch (error) {
