@@ -77,7 +77,7 @@ async function createPayPalOrderForSubscription({ userId, subscriptionId, return
     prefer: 'return=representation',
   };
 
-  const { body: order } = await ordersController.ordersCreate(orderPayload);
+  const { result: order } = await ordersController.createOrder(orderPayload);
 
   const payment = await prisma.payment.create({
     data: {
@@ -163,7 +163,7 @@ const createOrder = async (req, res) => {
       prefer: 'return=representation',
     };
 
-    const { body: order } = await ordersController.ordersCreate(orderPayload);
+    const { result: order } = await ordersController.createOrder(orderPayload);
 
     const payment = await prisma.payment.create({
       data: {
@@ -274,11 +274,11 @@ const verifyPayment = async (req, res) => {
 
     let captureData;
     try {
-      const result = await ordersController.ordersCapture({
+      const { result } = await ordersController.captureOrder({
         id: orderId,
         prefer: 'return=representation',
       });
-      captureData = result.body;
+      captureData = result;
     } catch (captureErr) {
       await prisma.payment.update({
         where: { paypalOrderId: orderId },
