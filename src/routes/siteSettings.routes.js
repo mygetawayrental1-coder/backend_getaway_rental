@@ -16,6 +16,7 @@ router.get('/category-order-admin', authenticate, isAdmin, ctrl.getCategoryOrder
 router.put('/contact', authenticate, isAdmin, ctrl.updateContact);
 router.put('/destination-order', authenticate, isAdmin, ctrl.updateDestinationOrder);
 router.put('/category-order', authenticate, isAdmin, ctrl.updateCategoryOrder);
+router.post('/revalidate', authenticate, isAdmin, ctrl.triggerRevalidate);
 
 module.exports = router;
 

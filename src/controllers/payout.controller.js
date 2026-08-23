@@ -129,6 +129,18 @@ const logPayment = async (req, res) => {
                 message: 'A valid payment amount greater than 0 is required.',
             });
         }
+        const existingPaid = await prisma.bookingPayment.aggregate({
+            where: { bookingId, status: 'PAID' },
+            _sum: { amount: true },
+        });
+        const alreadyPaid = existingPaid._sum.amount || 0;
+        const remaining = Math.round((booking.totalAmount - alreadyPaid) * 100) / 100;
+        if (parsedAmount > remaining + 0.009) {
+            return res.status(400).json({
+                success: false,
+                message: `Amount cannot exceed the remaining balance (${remaining}).`,
+            });
+        }
 
         const payment = await prisma.bookingPayment.create({
             data: {

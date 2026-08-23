@@ -207,6 +207,25 @@ const updateCategoryOrder = async (req, res) => {
     }
 };
 
+const triggerRevalidate = async (req, res) => {
+    try {
+        const { triggerWebsiteRevalidation } = require('../utils/revalidate');
+        const tags = req.body?.tags || ['featured-properties', 'locations', 'homepage'];
+        const paths = req.body?.paths || ['/', '/search-rental-full-map'];
+        const tagList = Array.isArray(tags)
+            ? tags
+            : String(tags).split(',').map((t) => t.trim()).filter(Boolean);
+        const pathList = Array.isArray(paths)
+            ? paths
+            : String(paths).split(',').map((p) => p.trim()).filter(Boolean);
+        await triggerWebsiteRevalidation({ tags: tagList, paths: pathList });
+        return res.json({ success: true, message: 'Website cache refresh requested.' });
+    } catch (err) {
+        console.error('[SiteSettings] revalidate error:', err);
+        return res.status(500).json({ success: false, message: 'Failed to refresh website cache.' });
+    }
+};
+
 module.exports = {
     getContact,
     listAll,
@@ -215,6 +234,7 @@ module.exports = {
     updateDestinationOrder,
     getCategoryOrder,
     updateCategoryOrder,
+    triggerRevalidate,
 };
 
 

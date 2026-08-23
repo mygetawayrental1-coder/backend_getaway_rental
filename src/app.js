@@ -57,7 +57,7 @@ app.set('trust proxy', 1);
 startIcalScheduler();
 
 // Middleware
-app.use(morgan('dev')); // Log HTTP requests
+app.use(morgan('tiny'));
 app.use(cors({
     origin: '*',
     credentials: true,

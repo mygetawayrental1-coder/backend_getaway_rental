@@ -7,6 +7,6 @@ router.post('/conversations', optionalAuth, messageController.getOrCreateConvers
 router.get('/conversations', authenticate, messageController.getConversations);
 router.get('/unread-count', authenticate, messageController.getUnreadMessageCount);
 router.get('/conversations/:conversationId', authenticate, messageController.getMessages);
-router.post('/conversations/:conversationId', optionalAuth, messageController.sendMessage);
+router.post('/conversations/:conversationId', authenticate, messageController.sendMessage);
 
 module.exports = router;

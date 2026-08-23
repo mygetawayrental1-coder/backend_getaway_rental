@@ -41,6 +41,29 @@ async function handleClerk(req, res) {
     return res.json({ received: true });
 }
 
+async function handlePayPal(req, res) {
+    try {
+        const event = req.body || {};
+        const type = event.event_type || event.eventType;
+        const resource = event.resource || {};
+        const relatedOrder = resource.supplementary_data?.related_ids?.order_id;
+        const resolvedId =
+            relatedOrder ||
+            (type && String(type).includes('CHECKOUT.ORDER') ? resource.id : null);
+        if (!resolvedId) {
+            return res.json({ received: true, ignored: true });
+        }
+
+        const { finalizePayPalOrder } = require('./payment.controller');
+        await finalizePayPalOrder(resolvedId);
+        return res.json({ received: true });
+    } catch (err) {
+        console.error('[webhook] PayPal handler error', err.message);
+        return res.status(500).json({ error: 'PayPal webhook processing failed' });
+    }
+}
+
 module.exports = {
     handleClerk,
+    handlePayPal,
 };

@@ -222,11 +222,9 @@ exports.searchProperties = async (req, res) => {
                     owner: {
                         select: {
                             id: true,
-                            email: true,
                             firstName: true,
                             lastName: true,
                             profilePic: true,
-                            phoneNumber: true,
                             about: true,
                             createdAt: true,
                         },
@@ -310,11 +308,9 @@ exports.getFeatured = async (req, res) => {
                 owner: {
                     select: {
                         id: true,
-                        email: true,
                         firstName: true,
                         lastName: true,
                         profilePic: true,
-                        phoneNumber: true,
                         about: true,
                         createdAt: true,
                     },
@@ -341,11 +337,9 @@ exports.getBySlug = async (req, res) => {
                 owner: {
                     select: {
                         id: true,
-                        email: true,
                         firstName: true,
                         lastName: true,
                         profilePic: true,
-                        phoneNumber: true,
                         about: true,
                         createdAt: true,
                     },
@@ -360,7 +354,6 @@ exports.getBySlug = async (req, res) => {
                     select: {
                         id: true,
                         authorName: true,
-                        authorEmail: true,
                         sleepRating: true,
                         locationRating: true,
                         serviceRating: true,
@@ -426,7 +419,6 @@ exports.getReviews = async (req, res) => {
             select: {
                 id: true,
                 authorName: true,
-                authorEmail: true,
                 sleepRating: true,
                 locationRating: true,
                 serviceRating: true,

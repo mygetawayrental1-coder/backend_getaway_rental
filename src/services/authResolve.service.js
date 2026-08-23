@@ -57,7 +57,7 @@ async function getUserFromBearerToken(token) {
         });
         const clerkId = payload?.sub;
         if (!clerkId) {
-            console.warn('[auth] Token verified but no sub/clerkId found in payload', payload);
+            console.warn('[auth] Token verified but no sub/clerkId found in payload');
             return null;
         }
 

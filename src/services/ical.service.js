@@ -59,7 +59,9 @@ class IcalService {
     async importFromUrl(propertyId, source, url) {
         const stats = { imported: 0, updated: 0, removed: 0 };
         try {
-            const events = await ical.async.fromURL(url);
+            const { assertSafeHttpsUrl } = require('../utils/safeRemoteUrl');
+        const safeUrl = await assertSafeHttpsUrl(url);
+        const events = await ical.async.fromURL(safeUrl);
             const seenUids = new Set();
             const sourceKey = String(source || 'external');
 

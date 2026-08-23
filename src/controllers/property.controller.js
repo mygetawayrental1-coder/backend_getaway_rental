@@ -890,6 +890,7 @@ const updateProperty = async (req, res) => {
 
         fields.forEach(field => {
             if (field === 'personalWebsiteUrl' || field === 'virtualTourUrl') return;
+            if (field === 'status' && req.user.role !== 'ADMIN') return;
             if (updateData[field] !== undefined) data[field] = updateData[field];
         });
 
@@ -906,7 +907,9 @@ const updateProperty = async (req, res) => {
             if (updateData[field] !== undefined) data[field] = parseInt(updateData[field]) || 0;
         });
         boolFields.forEach((field) => {
-            if (updateData[field] !== undefined) data[field] = Boolean(updateData[field]);
+            if (updateData[field] === undefined) return;
+            if (field === 'isFeatured' && req.user.role !== 'ADMIN') return;
+            data[field] = Boolean(updateData[field]);
         });
         jsonFields.forEach(field => {
             if (updateData[field] !== undefined) {

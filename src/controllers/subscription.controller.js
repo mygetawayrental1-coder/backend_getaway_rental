@@ -288,13 +288,15 @@ const subscribe = async (req, res) => {
         chargeAmount = Math.round(chargeAmount * 100) / 100;
 
         // Free (or $0 after coupon) → activate now.
-        // Paid + PayPal configured → PENDING until capture (admin manual assign still bypasses).
-        // Paid but PayPal missing → only activate if SUBSCRIPTION_REQUIRE_PAYMENT is not true.
+        // Paid plans always require PayPal (fail closed). Admin assign still bypasses.
         const paypalReady = isPayPalConfigured();
-        const requirePayment =
-            chargeAmount > 0 &&
-            (paypalReady || process.env.SUBSCRIPTION_REQUIRE_PAYMENT === 'true');
-        const activateNow = !requirePayment;
+        if (chargeAmount > 0 && !paypalReady) {
+            return res.status(503).json({
+                success: false,
+                message: 'Payment is required for this plan, but PayPal is not configured. Please try again later.',
+            });
+        }
+        const activateNow = chargeAmount <= 0;
         const subscriptionStatus = activateNow ? 'ACTIVE' : 'PENDING';
 
         const subscription = await prisma.$transaction(async (tx) => {
@@ -315,7 +317,8 @@ const subscribe = async (req, res) => {
                 data: { status: 'CANCELLED' },
             });
 
-            if (resolvedCouponId) {
+            // Coupon use is counted only after PayPal capture (or free activate).
+            if (resolvedCouponId && subscriptionStatus === 'ACTIVE') {
                 await applyCoupon(resolvedCouponId, tx);
             }
 

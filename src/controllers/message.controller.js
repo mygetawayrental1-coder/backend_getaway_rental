@@ -53,12 +53,11 @@ function isAnonymousGuest(conversation, senderEmail) {
     );
 }
 
-function canAccessConversation(user, conversation, { senderEmail } = {}) {
+function canAccessConversation(user, conversation) {
     if (!conversation) return false;
     if (user?.role === 'ADMIN') return true;
     if (isConversationOwner(user, conversation)) return true;
     if (isConversationGuest(user, conversation)) return true;
-    if (isAnonymousGuest(conversation, senderEmail)) return true;
     return false;
 }
 
@@ -407,14 +406,14 @@ const sendMessage = async (req, res) => {
             return res.status(404).json({ success: false, message: 'Conversation not found.' });
         }
 
-        if (!canAccessConversation(req.user, conversation, { senderEmail })) {
+        if (!canAccessConversation(req.user, conversation)) {
             return res.status(403).json({ success: false, message: 'Access denied.' });
         }
 
         const user = req.user;
         const isOwner = isConversationOwner(user, conversation);
         const isGuest = isConversationGuest(user, conversation);
-        const isAnon = isAnonymousGuest(conversation, senderEmail);
+        const isAnon = false;
 
         let senderId = null;
         let receiverId = null;

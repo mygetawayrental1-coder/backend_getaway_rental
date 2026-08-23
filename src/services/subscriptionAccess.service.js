@@ -132,10 +132,23 @@ async function assertListingPayload(userId, payload = {}) {
     }
 
     if (isLegacyPlan(subscription.plan)) {
+        const legacyEnt = planEntitlements(subscription.plan);
+        if (
+            (payload.isFeatured === true ||
+                payload.isFeatured === 'true' ||
+                payload.isFeatured === 1) &&
+            !legacyEnt.homepageFeaturedListing
+        ) {
+            return {
+                allowed: false,
+                status: 403,
+                message: 'Homepage featured listing is not included in your plan.',
+            };
+        }
         return {
             allowed: true,
             subscription,
-            entitlements: planEntitlements(subscription.plan),
+            entitlements: legacyEnt,
             legacy: true,
         };
     }

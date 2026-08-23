@@ -8,6 +8,23 @@ const {
 const { OrdersController } = require('@paypal/paypal-server-sdk');
 const { getPagination, formatPaginatedResponse } = require('../utils/helpers');
 const { reconcileUserRole } = require('../services/subscriptionAccess.service');
+const { applyCoupon } = require('./coupon.controller');
+
+function safeReturnPath(returnPath) {
+  const raw = String(returnPath || '/pricing?paypal=success');
+  if (!raw.startsWith('/') || raw.startsWith('//')) {
+    return '/pricing?paypal=success';
+  }
+  return raw;
+}
+
+function capturedAmount(captureData) {
+  const raw =
+    captureData?.purchaseUnits?.[0]?.payments?.captures?.[0]?.amount?.value ??
+    captureData?.purchaseUnits?.[0]?.amount?.value;
+  const n = parseFloat(raw);
+  return Number.isFinite(n) ? Math.round(n * 100) / 100 : null;
+}
 
 function expectedSubscriptionAmount(sub) {
   let expected =
@@ -32,11 +49,11 @@ async function createPayPalOrderForSubscription({ userId, subscriptionId, return
   }
 
   const owned = await prisma.userSubscription.findFirst({
-    where: { id: subscriptionId, userId },
+    where: { id: subscriptionId, userId, status: 'PENDING' },
     include: { plan: true, coupon: true },
   });
   if (!owned) {
-    const err = new Error('Invalid subscription reference.');
+    const err = new Error('Invalid or expired checkout. Start subscribe again.');
     err.status = 403;
     throw err;
   }
@@ -49,7 +66,7 @@ async function createPayPalOrderForSubscription({ userId, subscriptionId, return
   }
 
   const website = getWebsiteBaseUrl();
-  const returnUrl = `${website}${returnPath || '/pricing?paypal=success'}`;
+  const returnUrl = `${website}${safeReturnPath(returnPath)}`;
   const cancelUrl = `${website}/pricing?paypal=cancelled`;
 
   const ordersController = new OrdersController(paypalClient);
@@ -110,83 +127,22 @@ const createOrder = async (req, res) => {
       });
     }
 
-    const { amount, currency = 'USD', type, subscriptionId, returnPath } = req.body;
+    const { subscriptionId, returnPath } = req.body;
     const userId = req.user.id;
 
-    if (subscriptionId) {
-      const paypal = await createPayPalOrderForSubscription({
-        userId,
-        subscriptionId,
-        returnPath,
-      });
-      return res.json({ success: true, data: paypal });
-    }
-
-    let chargeAmount = parseFloat(amount);
-    if (!Number.isFinite(chargeAmount) || chargeAmount <= 0) {
+    if (!subscriptionId) {
       return res.status(400).json({
         success: false,
-        message: 'Valid amount is required.',
-      });
-    }
-    if (String(currency).toUpperCase() !== 'USD') {
-      return res.status(400).json({
-        success: false,
-        message: 'Only USD is supported.',
+        message: 'A subscription is required to start checkout.',
       });
     }
 
-    const website = getWebsiteBaseUrl();
-    const ordersController = new OrdersController(paypalClient);
-    const orderPayload = {
-      body: {
-        intent: 'CAPTURE',
-        purchaseUnits: [
-          {
-            amount: {
-              currencyCode: 'USD',
-              value: chargeAmount.toFixed(2),
-            },
-            description:
-              type === 'subscription'
-                ? 'MyGetawayRental Subscription'
-                : 'MyGetawayRental Booking',
-          },
-        ],
-        applicationContext: {
-          brandName: 'MyGetawayRental',
-          userAction: 'PAY_NOW',
-          returnUrl: `${website}/pricing?paypal=success`,
-          cancelUrl: `${website}/pricing?paypal=cancelled`,
-        },
-      },
-      prefer: 'return=representation',
-    };
-
-    const { result: order } = await ordersController.createOrder(orderPayload);
-
-    const payment = await prisma.payment.create({
-      data: {
-        paypalOrderId: order.id,
-        amount: chargeAmount,
-        currency: 'USD',
-        status: 'created',
-        type: type || 'subscription',
-        userId,
-      },
+    const paypal = await createPayPalOrderForSubscription({
+      userId,
+      subscriptionId,
+      returnPath,
     });
-
-    res.json({
-      success: true,
-      data: {
-        orderId: order.id,
-        amount: chargeAmount,
-        currency: 'USD',
-        paymentId: payment.id,
-        approvalUrl: order.links?.find((link) => link.rel === 'approve')?.href,
-        mode: getPayPalMode(),
-      },
-    });
+    return res.json({ success: true, data: paypal });
   } catch (error) {
     console.error('Create PayPal order error:', error);
     const status = error.status || 500;
@@ -199,6 +155,21 @@ const createOrder = async (req, res) => {
 };
 
 async function activateSubscriptionAfterPayment(subscriptionId, userId) {
+  const sub = await prisma.userSubscription.findUnique({
+    where: { id: subscriptionId },
+  });
+  if (!sub || sub.status !== 'PENDING') {
+    return false;
+  }
+
+  if (sub.couponId) {
+    try {
+      await applyCoupon(sub.couponId);
+    } catch (err) {
+      console.warn('[payments] coupon increment skipped:', err.message);
+    }
+  }
+
   await prisma.userSubscription.update({
     where: { id: subscriptionId },
     data: { status: 'ACTIVE' },
@@ -216,6 +187,104 @@ async function activateSubscriptionAfterPayment(subscriptionId, userId) {
   } catch (_) {
     /* optional */
   }
+  return true;
+}
+
+async function finalizePayPalOrder(orderId, { actorUserId, actorRole } = {}) {
+  const pending = await prisma.payment.findUnique({
+    where: { paypalOrderId: orderId },
+    include: { subscription: true },
+  });
+  if (!pending) {
+    const err = new Error('Payment record not found for this order.');
+    err.status = 404;
+    throw err;
+  }
+  if (actorUserId && actorRole !== 'ADMIN' && pending.userId !== actorUserId) {
+    const err = new Error('Access denied.');
+    err.status = 403;
+    throw err;
+  }
+  if (pending.status === 'paid') {
+    return prisma.payment.findUnique({
+      where: { paypalOrderId: orderId },
+      include: {
+        subscription: { include: { plan: true } },
+        user: {
+          select: { id: true, email: true, firstName: true, lastName: true },
+        },
+      },
+    });
+  }
+
+  const ordersController = new OrdersController(paypalClient);
+  let captureData;
+  try {
+    const { result } = await ordersController.captureOrder({
+      id: orderId,
+      prefer: 'return=representation',
+    });
+    captureData = result;
+  } catch (captureErr) {
+    const already = String(captureErr.message || '').toLowerCase();
+    if (already.includes('already captured') || already.includes('order already')) {
+      const { result } = await ordersController.getOrder({ id: orderId });
+      captureData = result;
+    } else {
+      await prisma.payment.update({
+        where: { paypalOrderId: orderId },
+        data: { status: 'failed' },
+      });
+      throw captureErr;
+    }
+  }
+
+  if (captureData.status !== 'COMPLETED') {
+    await prisma.payment.update({
+      where: { paypalOrderId: orderId },
+      data: { status: 'failed' },
+    });
+    const err = new Error('Payment not completed.');
+    err.status = 400;
+    throw err;
+  }
+
+  const paid = capturedAmount(captureData);
+  const expected = Math.round(Number(pending.amount) * 100) / 100;
+  if (paid == null || Math.abs(paid - expected) > 0.05) {
+    await prisma.payment.update({
+      where: { paypalOrderId: orderId },
+      data: { status: 'failed' },
+    });
+    const err = new Error('Paid amount did not match the plan price.');
+    err.status = 400;
+    throw err;
+  }
+
+  const captureId =
+    captureData.purchaseUnits?.[0]?.payments?.captures?.[0]?.id;
+
+  const payment = await prisma.payment.update({
+    where: { paypalOrderId: orderId },
+    data: {
+      paypalPaymentId: captureId,
+      status: 'paid',
+    },
+    include: {
+      subscription: { include: { plan: true } },
+      user: {
+        select: { id: true, email: true, firstName: true, lastName: true },
+      },
+    },
+  });
+
+  if (payment.subscriptionId) {
+    await activateSubscriptionAfterPayment(
+      payment.subscriptionId,
+      pending.userId,
+    );
+  }
+  return payment;
 }
 
 const verifyPayment = async (req, res) => {
@@ -235,93 +304,10 @@ const verifyPayment = async (req, res) => {
       });
     }
 
-    const pending = await prisma.payment.findUnique({
-      where: { paypalOrderId: orderId },
+    const payment = await finalizePayPalOrder(orderId, {
+      actorUserId: req.user.id,
+      actorRole: req.user.role,
     });
-
-    if (!pending) {
-      return res.status(404).json({
-        success: false,
-        message: 'Payment record not found for this order.',
-      });
-    }
-
-    if (req.user.role !== 'ADMIN' && pending.userId !== req.user.id) {
-      return res.status(403).json({
-        success: false,
-        message: 'Access denied.',
-      });
-    }
-
-    if (pending.status === 'paid') {
-      const paid = await prisma.payment.findUnique({
-        where: { paypalOrderId: orderId },
-        include: {
-          subscription: { include: { plan: true } },
-          user: {
-            select: { id: true, email: true, firstName: true, lastName: true },
-          },
-        },
-      });
-      return res.json({
-        success: true,
-        message: 'Payment was already verified.',
-        data: paid,
-      });
-    }
-
-    const ordersController = new OrdersController(paypalClient);
-
-    let captureData;
-    try {
-      const { result } = await ordersController.captureOrder({
-        id: orderId,
-        prefer: 'return=representation',
-      });
-      captureData = result;
-    } catch (captureErr) {
-      await prisma.payment.update({
-        where: { paypalOrderId: orderId },
-        data: { status: 'failed' },
-      });
-      throw captureErr;
-    }
-
-    if (captureData.status !== 'COMPLETED') {
-      await prisma.payment.update({
-        where: { paypalOrderId: orderId },
-        data: { status: 'failed' },
-      });
-      return res.status(400).json({
-        success: false,
-        message: 'Payment not completed.',
-        status: captureData.status,
-      });
-    }
-
-    const captureId =
-      captureData.purchaseUnits?.[0]?.payments?.captures?.[0]?.id;
-
-    const payment = await prisma.payment.update({
-      where: { paypalOrderId: orderId },
-      data: {
-        paypalPaymentId: captureId,
-        status: 'paid',
-      },
-      include: {
-        subscription: { include: { plan: true } },
-        user: {
-          select: { id: true, email: true, firstName: true, lastName: true },
-        },
-      },
-    });
-
-    if (payment.subscriptionId) {
-      await activateSubscriptionAfterPayment(
-        payment.subscriptionId,
-        pending.userId,
-      );
-    }
 
     res.json({
       success: true,
@@ -330,9 +316,10 @@ const verifyPayment = async (req, res) => {
     });
   } catch (error) {
     console.error('Verify PayPal payment error:', error);
-    res.status(500).json({
+    const status = error.status || 500;
+    res.status(status).json({
       success: false,
-      message: 'Payment verification failed.',
+      message: error.message || 'Payment verification failed.',
       ...(process.env.NODE_ENV === 'development' && { error: error.message }),
     });
   }
@@ -436,113 +423,10 @@ const getPaymentById = async (req, res) => {
   }
 };
 
-const refundPayment = async (req, res) => {
-  try {
-    if (req.user.role !== 'ADMIN') {
-      return res.status(403).json({ success: false, message: 'Admin only.' });
-    }
-
-    const { id } = req.params;
-    const payment = await prisma.payment.findUnique({ where: { id } });
-    if (!payment) {
-      return res.status(404).json({ success: false, message: 'Payment not found.' });
-    }
-    if (payment.status !== 'paid') {
-      return res.status(400).json({
-        success: false,
-        message: 'Only paid payments can be refunded.',
-      });
-    }
-
-    let paypalRefundId = null;
-    if (payment.paypalPaymentId && isPayPalConfigured()) {
-      try {
-        const mode = getPayPalMode();
-        const base =
-          mode === 'live'
-            ? 'https://api-m.paypal.com'
-            : 'https://api-m.sandbox.paypal.com';
-
-        const basic = Buffer.from(
-          `${process.env.PAYPAL_CLIENT_ID}:${process.env.PAYPAL_CLIENT_SECRET}`,
-        ).toString('base64');
-        const tokenRes = await fetch(`${base}/v1/oauth2/token`, {
-          method: 'POST',
-          headers: {
-            Authorization: `Basic ${basic}`,
-            'Content-Type': 'application/x-www-form-urlencoded',
-          },
-          body: 'grant_type=client_credentials',
-        });
-        const tokenJson = await tokenRes.json();
-        if (!tokenRes.ok || !tokenJson.access_token) {
-          throw new Error(tokenJson.error_description || 'PayPal auth failed');
-        }
-
-        const refundRes = await fetch(
-          `${base}/v2/payments/captures/${payment.paypalPaymentId}/refund`,
-          {
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${tokenJson.access_token}`,
-              'Content-Type': 'application/json',
-              Prefer: 'return=representation',
-            },
-            body: JSON.stringify({}),
-          },
-        );
-        const refundJson = await refundRes.json();
-        if (!refundRes.ok) {
-          throw new Error(
-            refundJson?.message ||
-              refundJson?.details?.[0]?.description ||
-              'PayPal refund failed',
-          );
-        }
-        paypalRefundId = refundJson.id;
-      } catch (paypalErr) {
-        console.error('PayPal refund API error:', paypalErr);
-        return res.status(502).json({
-          success: false,
-          message: `PayPal refund failed: ${paypalErr.message}. Payment left as paid.`,
-        });
-      }
-    }
-
-    const updated = await prisma.payment.update({
-      where: { id },
-      data: { status: 'refunded' },
-      include: {
-        user: {
-          select: { id: true, email: true, firstName: true, lastName: true },
-        },
-        subscription: { include: { plan: true } },
-      },
-    });
-
-    res.json({
-      success: true,
-      message: paypalRefundId
-        ? `Refunded via PayPal (${paypalRefundId}).`
-        : 'Marked as refunded.',
-      data: updated,
-      paypalRefundId,
-    });
-  } catch (error) {
-    console.error('Refund payment error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to refund payment.',
-    });
-  }
-};
-
 const getPayPalStatus = async (_req, res) => {
   res.json({
     success: true,
     configured: isPayPalConfigured(),
-    mode: getPayPalMode(),
-    currency: 'USD',
   });
 };
 
@@ -551,8 +435,8 @@ module.exports = {
   verifyPayment,
   getPaymentHistory,
   getPaymentById,
-  refundPayment,
   getPayPalStatus,
+  finalizePayPalOrder,
   createPayPalOrderForSubscription,
   expectedSubscriptionAmount,
 };

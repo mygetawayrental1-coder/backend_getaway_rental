@@ -273,22 +273,14 @@ const createGuestRequest = async (req, res) => {
             });
         }
 
-        // Prefer server-side seasonal quote so email estimates match booking math.
+        // Server-side seasonal quote + booking charges. Ignore client fee amounts.
         let quote = {
-            nights: Number.isFinite(Number(nights)) ? Number(nights) : null,
-            quotedNightlyRate: Number.isFinite(Number(quotedNightlyRate))
-                ? Number(quotedNightlyRate)
-                : null,
-            quotedSubtotal: Number.isFinite(Number(quotedSubtotal))
-                ? Number(quotedSubtotal)
-                : null,
-            quotedServiceFee: Number.isFinite(Number(quotedServiceFee))
-                ? Number(quotedServiceFee)
-                : null,
-            quotedDynamicFees: Number.isFinite(Number(quotedDynamicFees))
-                ? Number(quotedDynamicFees)
-                : null,
-            quotedTotal: Number.isFinite(Number(quotedTotal)) ? Number(quotedTotal) : null,
+            nights: null,
+            quotedNightlyRate: null,
+            quotedSubtotal: null,
+            quotedServiceFee: 0,
+            quotedDynamicFees: 0,
+            quotedTotal: null,
         };
         if (checkin && checkout) {
             const stayQuote = calculateStayQuote({
@@ -299,15 +291,25 @@ const createGuestRequest = async (req, res) => {
                 seasons: property.seasonalPrices || [],
             });
             if (stayQuote.nights > 0) {
-                const fees =
-                    (Number(quote.quotedServiceFee) || 0) +
-                    (Number(quote.quotedDynamicFees) || 0);
+                const charges = await prisma.bookingCharge.findMany({
+                    where: { isActive: true },
+                });
+                let feeTotal = 0;
+                for (const c of charges) {
+                    if (c.calcType === 'percent') {
+                        feeTotal += stayQuote.subtotal * (Number(c.value) || 0) / 100;
+                    } else {
+                        feeTotal += Number(c.value) || 0;
+                    }
+                }
+                feeTotal = Math.round(feeTotal * 100) / 100;
                 quote = {
-                    ...quote,
                     nights: stayQuote.nights,
                     quotedNightlyRate: Math.round(stayQuote.subtotal / stayQuote.nights),
                     quotedSubtotal: stayQuote.subtotal,
-                    quotedTotal: stayQuote.subtotal + fees,
+                    quotedServiceFee: feeTotal,
+                    quotedDynamicFees: 0,
+                    quotedTotal: Math.round((stayQuote.subtotal + feeTotal) * 100) / 100,
                 };
             }
         }
