@@ -18,6 +18,17 @@ function safeReturnPath(returnPath) {
   return raw;
 }
 
+// Allow deep-link URLs from the mobile app (e.g. mgwr://payment/success)
+function safeAppReturnUrl(url) {
+  if (!url || typeof url !== 'string') return null;
+  const trimmed = url.trim();
+  // Only allow custom scheme URLs — never arbitrary http(s) to prevent open-redirect
+  if (/^[a-z][a-z0-9+\-.]*:\/\//i.test(trimmed) && !trimmed.startsWith('http')) {
+    return trimmed;
+  }
+  return null;
+}
+
 function capturedAmount(captureData) {
   const raw =
     captureData?.purchaseUnits?.[0]?.payments?.captures?.[0]?.amount?.value ??
@@ -41,7 +52,7 @@ function expectedSubscriptionAmount(sub) {
   return Math.round(expected * 100) / 100;
 }
 
-async function createPayPalOrderForSubscription({ userId, subscriptionId, returnPath }) {
+async function createPayPalOrderForSubscription({ userId, subscriptionId, returnPath, returnUrl: returnUrlOverride, cancelUrl: cancelUrlOverride }) {
   if (!isPayPalConfigured()) {
     const err = new Error('Payment service not configured.');
     err.status = 503;
@@ -66,8 +77,14 @@ async function createPayPalOrderForSubscription({ userId, subscriptionId, return
   }
 
   const website = getWebsiteBaseUrl();
-  const returnUrl = `${website}${safeReturnPath(returnPath)}`;
-  const cancelUrl = `${website}/pricing?paypal=cancelled`;
+  // Mobile app passes deep-link returnUrl (e.g. mgwr://payment/success)
+  // Web passes returnPath which we append to the website base URL
+  const returnUrl =
+    safeAppReturnUrl(returnUrlOverride) ??
+    `${website}${safeReturnPath(returnPath)}`;
+  const cancelUrl =
+    safeAppReturnUrl(cancelUrlOverride) ??
+    `${website}/pricing?paypal=cancelled`;
 
   const ordersController = new OrdersController(paypalClient);
   const orderPayload = {
@@ -127,7 +144,7 @@ const createOrder = async (req, res) => {
       });
     }
 
-    const { subscriptionId, returnPath } = req.body;
+    const { subscriptionId, returnPath, returnUrl, cancelUrl } = req.body;
     const userId = req.user.id;
 
     if (!subscriptionId) {
@@ -141,6 +158,8 @@ const createOrder = async (req, res) => {
       userId,
       subscriptionId,
       returnPath,
+      returnUrl,
+      cancelUrl,
     });
     return res.json({ success: true, data: paypal });
   } catch (error) {
