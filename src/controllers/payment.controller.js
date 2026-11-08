@@ -131,21 +131,6 @@ async function createPayPalOrderForSubscription({ userId, subscriptionId, return
         returnUrl,
         cancelUrl,
       },
-      // application_context.return_url is deprecated. PayPal now redirects
-      // using payment_source.paypal.experience_context.return_url. If that
-      // is missing, it uses the Return URL saved on the PayPal app, which
-      // is still the deleted Vercel site.
-      paymentSource: {
-        paypal: {
-          experienceContext: {
-            brandName: 'MyGetawayRental',
-            landingPage: 'NO_PREFERENCE',
-            userAction: 'PAY_NOW',
-            returnUrl,
-            cancelUrl,
-          },
-        },
-      },
     },
     prefer: 'return=representation',
   };
@@ -203,12 +188,13 @@ const createOrder = async (req, res) => {
     });
     return res.json({ success: true, data: paypal });
   } catch (error) {
-    console.error('Create PayPal order error:', error);
-    const status = error.status || 500;
-    res.status(status).json({
+    console.error('Create PayPal order error:', error?.result || error);
+    const details = Array.isArray(error?.result?.details) ? error.result.details : [];
+    const detailText = details.map((d) => d.description || d.issue).filter(Boolean).join(' ');
+    const status = error.statusCode || error.status || 500;
+    res.status(status >= 400 && status < 600 ? status : 500).json({
       success: false,
-      message: error.message || 'Failed to create payment order.',
-      ...(process.env.NODE_ENV === 'development' && { error: error.message }),
+      message: detailText || error.message || 'Failed to create payment order.',
     });
   }
 };
