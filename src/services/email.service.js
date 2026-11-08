@@ -766,7 +766,7 @@ const sendListingStatusChangeEmail = async ({
       `}
 
       <div style="text-align: center; margin: 30px 0;">
-        <a href="https://mygetawayrental.com/dashboard/listings" style="background: #ea580c; color: #ffffff; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px; display: inline-block;">
+        <a href="https://www.mygetawayrental.com/dashboard/listings" style="background: #ea580c; color: #ffffff; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px; display: inline-block;">
           Open Owner Dashboard
         </a>
       </div>

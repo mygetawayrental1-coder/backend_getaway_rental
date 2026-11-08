@@ -10,6 +10,30 @@ const { getPagination, formatPaginatedResponse } = require('../utils/helpers');
 const { reconcileUserRole } = require('../services/subscriptionAccess.service');
 const { applyCoupon } = require('./coupon.controller');
 
+function allowedWebOrigin(origin) {
+  if (!origin || typeof origin !== 'string') return null;
+  let parsed;
+  try {
+    parsed = new URL(origin);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return null;
+  if (parsed.hostname.endsWith('.vercel.app') || parsed.hostname.endsWith('.up.railway.app')) return null;
+  if (parsed.hostname === 'mygetawayrental.com') return 'https://www.mygetawayrental.com';
+  const list = `${process.env.WEBSITE_URL || ''},${process.env.FRONTEND_URL || ''}`;
+  const ok = list.split(',').some((entry) => {
+    const raw = entry.trim();
+    if (!raw.startsWith('http')) return false;
+    try {
+      return new URL(raw).origin === parsed.origin;
+    } catch {
+      return false;
+    }
+  });
+  return ok ? parsed.origin : null;
+}
+
 function safeReturnPath(returnPath) {
   const raw = String(returnPath || '/pricing?paypal=success');
   if (!raw.startsWith('/') || raw.startsWith('//')) {
@@ -52,7 +76,7 @@ function expectedSubscriptionAmount(sub) {
   return Math.round(expected * 100) / 100;
 }
 
-async function createPayPalOrderForSubscription({ userId, subscriptionId, returnPath, returnUrl: returnUrlOverride, cancelUrl: cancelUrlOverride }) {
+async function createPayPalOrderForSubscription({ userId, subscriptionId, returnPath, returnOrigin, returnUrl: returnUrlOverride, cancelUrl: cancelUrlOverride }) {
   if (!isPayPalConfigured()) {
     const err = new Error('Payment service not configured.');
     err.status = 503;
@@ -76,9 +100,9 @@ async function createPayPalOrderForSubscription({ userId, subscriptionId, return
     throw err;
   }
 
-  const website = getWebsiteBaseUrl();
+  const website = allowedWebOrigin(returnOrigin) || getWebsiteBaseUrl();
   // Mobile app passes deep-link returnUrl (e.g. mgwr://payment/success)
-  // Web passes returnPath which we append to the website base URL
+  // Web passes returnPath which we append to the site the user was signed in on
   const returnUrl =
     safeAppReturnUrl(returnUrlOverride) ??
     `${website}${safeReturnPath(returnPath)}`;
@@ -106,6 +130,21 @@ async function createPayPalOrderForSubscription({ userId, subscriptionId, return
         userAction: 'PAY_NOW',
         returnUrl,
         cancelUrl,
+      },
+      // application_context.return_url is deprecated. PayPal now redirects
+      // using payment_source.paypal.experience_context.return_url. If that
+      // is missing, it uses the Return URL saved on the PayPal app, which
+      // is still the deleted Vercel site.
+      paymentSource: {
+        paypal: {
+          experienceContext: {
+            brandName: 'MyGetawayRental',
+            landingPage: 'NO_PREFERENCE',
+            userAction: 'PAY_NOW',
+            returnUrl,
+            cancelUrl,
+          },
+        },
       },
     },
     prefer: 'return=representation',
@@ -144,7 +183,7 @@ const createOrder = async (req, res) => {
       });
     }
 
-    const { subscriptionId, returnPath, returnUrl, cancelUrl } = req.body;
+    const { subscriptionId, returnPath, returnOrigin, returnUrl, cancelUrl } = req.body;
     const userId = req.user.id;
 
     if (!subscriptionId) {
@@ -158,6 +197,7 @@ const createOrder = async (req, res) => {
       userId,
       subscriptionId,
       returnPath,
+      returnOrigin,
       returnUrl,
       cancelUrl,
     });

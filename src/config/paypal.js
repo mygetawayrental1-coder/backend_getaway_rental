@@ -45,11 +45,29 @@ function getPayPalMode() {
 }
 
 function getWebsiteBaseUrl() {
-  const fromEnv = (process.env.WEBSITE_URL || process.env.FRONTEND_URL || '')
+  const candidates = [process.env.WEBSITE_URL, process.env.FRONTEND_URL]
+    .filter(Boolean)
+    .join(',')
     .split(',')
     .map((u) => u.trim())
-    .find((u) => u.startsWith('http'));
-  return (fromEnv || 'https://mygetawayrental.com').replace(/\/$/, '');
+    .filter((u) => u.startsWith('http'));
+  // Public site is www.mygetawayrental.com. Railway and the deleted Vercel
+  // host are extra addresses for the same app, not PayPal return URLs.
+  const preferred = candidates.find((u) => {
+    try {
+      const host = new URL(u).hostname;
+      return !host.endsWith('.vercel.app') && !host.endsWith('.up.railway.app');
+    } catch {
+      return false;
+    }
+  });
+  try {
+    const url = new URL(preferred || 'https://www.mygetawayrental.com');
+    if (url.hostname === 'mygetawayrental.com') return 'https://www.mygetawayrental.com';
+    return url.origin;
+  } catch {
+    return 'https://www.mygetawayrental.com';
+  }
 }
 
 module.exports = {
